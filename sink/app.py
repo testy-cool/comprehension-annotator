@@ -10,13 +10,16 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+from .anchor import resolve_all
 from .auth import EXTENSION_ORIGIN, matches
 from .library import Library
 from .rewrite import build_prompt
 from .urls import document_id
+
+WEB = Path(__file__).parent / "web"
 
 VERSION = "0.1.0"
 
@@ -138,6 +141,29 @@ def create_app(library: Library, token: str) -> FastAPI:
             raise HTTPException(status_code=409, detail="this document has no snapshot")
         return found, chosen
 
+    @app.get("/documents/{doc_id}/reading", dependencies=[Depends(authorize)])
+    def reading(doc_id: str, snapshot: str | None = Query(default=None)) -> dict:
+        """One Snapshot's text with every Annotation located inside it."""
+        found, chosen = _snapshot_of(doc_id, snapshot)
+        text = library.snapshot_text(doc_id, chosen["id"])
+        placed, orphans = resolve_all(text, library.annotations(doc_id))
+        return {
+            "document": found,
+            "snapshot": chosen,
+            "text": text,
+            "placed": [
+                {
+                    "annotation": annotation,
+                    "start": match.start,
+                    "end": match.end,
+                    "exact": match.exact,
+                    "ambiguous": match.ambiguous,
+                }
+                for annotation, match in placed
+            ],
+            "orphans": orphans,
+        }
+
     @app.get("/documents/{doc_id}/prompt", response_class=PlainTextResponse,
              dependencies=[Depends(authorize)])
     def prompt(doc_id: str, snapshot: str | None = Query(default=None)) -> str:
@@ -145,6 +171,17 @@ def create_app(library: Library, token: str) -> FastAPI:
         text = library.snapshot_text(doc_id, chosen["id"])
         document = dict(found, snapshots=[chosen])
         return build_prompt(document, library.annotations(doc_id), text)
+
+    @app.get("/search", dependencies=[Depends(authorize)])
+    def search(q: str = Query(default="")) -> dict:
+        return library.search(q)
+
+    @app.get("/", response_class=HTMLResponse)
+    def review() -> str:
+        # Served without a token because it carries one: anything that can reach
+        # loopback is already you, and CORS keeps a page you are visiting from
+        # reading this response.
+        return (WEB / "review.html").read_text(encoding="utf-8").replace("__TOKEN__", token)
 
     return app
 

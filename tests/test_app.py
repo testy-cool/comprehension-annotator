@@ -132,7 +132,7 @@ def test_a_page_only_the_extension_could_render_is_kept_verbatim(client):
     assert snapshot["hash"] == sha256(rendered)
 
 
-# ---------------------------------------------------------------- prompts
+# ------------------------------------------------- reading, prompts and search
 
 
 def article(text):
@@ -154,6 +154,53 @@ def stock(client, url="https://ex.com/a", body=None, ident="ann-1", **over):
     return client.post("/annotate", json=payload).json()
 
 
+def test_a_reading_locates_every_note_inside_the_captured_text(client):
+    stored = stock(client, quote="forty times", prefix="appear ", suffix=" on one")
+    found = client.get(f"/documents/{stored['document_id']}/reading").json()
+
+    assert "forty times" in found["text"]
+    assert len(found["placed"]) == 1
+    placed = found["placed"][0]
+    assert found["text"][placed["start"] : placed["end"]] == "forty times"
+    assert found["orphans"] == []
+
+
+def test_a_note_whose_passage_is_gone_is_reported_as_an_orphan(client):
+    stored = stock(client, quote="a sentence that was cut", note="this confused me")
+    found = client.get(f"/documents/{stored['document_id']}/reading").json()
+
+    assert found["placed"] == []
+    assert [o["note"] for o in found["orphans"]] == ["this confused me"]
+
+
+def test_a_reading_can_ask_for_an_older_snapshot(client):
+    first = stock(client, quote="forty times")
+    grown = article(LONG + " And then a great deal more arrived as the reader scrolled.")
+    client.post("/annotate", json={
+        "url": "https://ex.com/a", "title": "Anchoring", "dom_hash": sha256(grown),
+        "html": grown, "annotation": annotation("ann-2", quote="a great deal more"),
+    })
+
+    doc_id = first["document_id"]
+    latest = client.get(f"/documents/{doc_id}/reading").json()
+    original = client.get(
+        f"/documents/{doc_id}/reading", params={"snapshot": first["snapshot_id"]}
+    ).json()
+
+    assert "a great deal more" in latest["text"]
+    assert "a great deal more" not in original["text"]
+    assert len(latest["placed"]) == 2
+    assert len(original["placed"]) == 1
+    assert len(original["orphans"]) == 1
+
+
+def test_asking_for_a_snapshot_that_does_not_exist_is_a_404(client):
+    stored = stock(client)
+    assert client.get(
+        f"/documents/{stored['document_id']}/reading", params={"snapshot": "nope"}
+    ).status_code == 404
+
+
 def test_the_prompt_carries_the_page_and_the_notes_marked_in_place(client):
     stored = stock(client, quote="forty times", prefix="appear ", note="the core problem")
     prompt = client.get(f"/documents/{stored['document_id']}/prompt").text
@@ -162,3 +209,56 @@ def test_the_prompt_carries_the_page_and_the_notes_marked_in_place(client):
     assert "the core problem" in prompt
     assert "https://ex.com/a" in prompt
     assert "Rewrite the whole page" in prompt
+
+
+def test_search_finds_a_note_by_what_was_written_about_it(client):
+    stock(client, note="the core problem with anchoring")
+    stock(client, url="https://ex.com/b", ident="ann-2", note="something else entirely")
+
+    hits = client.get("/search", params={"q": "core problem"}).json()
+    assert len(hits["annotations"]) == 1
+    assert hits["annotations"][0]["document_title"] == "Anchoring"
+
+
+def test_search_finds_a_note_by_the_passage_it_points_at(client):
+    stock(client, quote="forty times")
+    hits = client.get("/search", params={"q": "FORTY"}).json()
+    assert len(hits["annotations"]) == 1
+
+
+def test_search_finds_a_page_by_its_address(client):
+    stock(client, url="https://example.org/deep/article")
+    hits = client.get("/search", params={"q": "example.org"}).json()
+    assert len(hits["documents"]) == 1
+
+
+def test_an_empty_search_returns_nothing_rather_than_everything(client):
+    stock(client)
+    hits = client.get("/search", params={"q": "  "}).json()
+    assert hits == {"documents": [], "annotations": []}
+
+
+def test_a_deleted_note_leaves_the_search_and_the_prompt(client):
+    stored = stock(client, quote="forty times", note="the core problem")
+    client.patch("/annotations/ann-1", json={"status": "deleted"})
+
+    assert client.get("/search", params={"q": "core problem"}).json()["annotations"] == []
+    prompt = client.get(f"/documents/{stored['document_id']}/prompt").text
+    assert "the core problem" not in prompt
+    assert "Nothing on this page is marked" in prompt
+
+
+def test_the_review_page_is_served_and_carries_the_token(client):
+    page = client.get("/")
+    assert page.status_code == 200
+    assert TOKEN in page.text
+    assert "__TOKEN__" not in page.text
+
+
+def test_the_reading_and_prompt_still_need_the_token(tmp_path):
+    from fastapi.testclient import TestClient
+    app = create_app(Library(tmp_path / "library"), TOKEN)
+    with TestClient(app) as bare:
+        assert bare.get("/documents/whatever/reading").status_code == 401
+        assert bare.get("/documents/whatever/prompt").status_code == 401
+        assert bare.get("/search", params={"q": "x"}).status_code == 401

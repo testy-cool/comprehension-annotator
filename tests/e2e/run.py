@@ -50,8 +50,7 @@ def find_browser() -> str:
 
 class Chrome:
     def __init__(self, profile: Path, extension: Path):
-        subprocess.run(["fuser", "-k", f"{CDP_PORT}/tcp"], capture_output=True)
-        time.sleep(0.5)
+        self.free_the_port()
         self.process = subprocess.Popen(
             [
                 find_browser(),
@@ -69,6 +68,25 @@ class Chrome:
             stderr=subprocess.DEVNULL,
         )
         self.await_ready()
+
+    @staticmethod
+    def free_the_port() -> None:
+        """Clear a browser an interrupted run left behind, and wait until it is gone.
+
+        Killing without waiting is what makes this suite look flaky: the next
+        browser starts, finds the port taken, and quietly runs without its
+        debugging endpoint.
+        """
+        import socket
+
+        subprocess.run(["fuser", "-k", f"{CDP_PORT}/tcp"], capture_output=True)
+        for _ in range(50):
+            with socket.socket() as probe:
+                probe.settimeout(0.2)
+                if probe.connect_ex(("127.0.0.1", CDP_PORT)) != 0:
+                    return
+            time.sleep(0.2)
+        raise RuntimeError(f"port {CDP_PORT} is still held by something")
 
     def await_ready(self) -> None:
         for _ in range(100):
@@ -134,13 +152,13 @@ class Session:
             raise RuntimeError(json.dumps(result["exceptionDetails"])[:400])
         return result["result"].get("value")
 
-    def wait_until(self, expression: str, what: str, timeout: float = 20):
+    def wait_until(self, expression, what: str, timeout: float = 20):
         """Poll until the page is actually ready to be talked to."""
         deadline = time.time() + timeout
         last = None
         while time.time() < deadline:
             try:
-                value = self.evaluate(expression)
+                value = expression() if callable(expression) else self.evaluate(expression)
                 if value:
                     return value
                 last = value
@@ -227,14 +245,36 @@ def main() -> int:
             % (SINK_PORT, token)
         )
 
-        def arm():
-            """Alt+A, as far as the extension is concerned."""
+        def tab_id():
             return options.evaluate(
                 "(async()=>{const [t]=await chrome.tabs.query"
-                "({url:'http://127.0.0.1:%d/*'});"
-                "return chrome.runtime.sendMessage({type:'annotator:toggle',tabId:t.id})})()"
-                % PAGE_PORT
+                "({url:'http://127.0.0.1:%d/*'});return t?t.id:null})()" % PAGE_PORT
             )
+
+        def mode_is_on(target: int) -> bool:
+            return bool(
+                options.evaluate(
+                    "(async()=>{const s=await chrome.storage.session.get('modes');"
+                    "return !!(s.modes||{})[%d]})()" % target
+                )
+            )
+
+        def set_mode(want: bool) -> bool:
+            """Alt+A, as far as the extension is concerned.
+
+            Reads the mode before touching it rather than firing the toggle and
+            hoping. A service worker Chrome has stopped can drop the first
+            message it is sent, and a blind retry would just toggle back.
+            """
+            target = options.wait_until(tab_id, "the page to appear in the tab list")
+            for _ in range(12):
+                if mode_is_on(target) == want:
+                    return True
+                options.evaluate(
+                    "chrome.runtime.sendMessage({type:'annotator:toggle',tabId:%d})" % target
+                )
+                time.sleep(0.5)
+            return mode_is_on(target) == want
 
         tab = browser.open(f"http://127.0.0.1:{PAGE_PORT}/index.html")
         page = Session(tab["webSocketDebuggerUrl"])
@@ -242,8 +282,7 @@ def main() -> int:
         page.call("Page.enable")
         page.wait_until("document.readyState === 'complete'", "the test page to load")
 
-        armed = arm()
-        check("arming the tab reports the mode is on", bool(armed and armed.get("on")))
+        check("arming the tab reports the mode is on", set_mode(True))
         page.wait_until("!!document.querySelector('[data-annotator-ui]')", "the interface to mount")
 
         check(
@@ -338,9 +377,7 @@ def main() -> int:
         page.wait_until("document.readyState === 'complete'", "the reload to finish")
         page.wait_until("!document.querySelector('[data-annotator-ui]')",
                         "the reload to take the interface with it")
-        again = arm()
-        check("a reloaded page can be armed again with one press",
-              bool(again and again.get("on")))
+        check("a reloaded page can be armed again with one press", set_mode(True))
         try:
             page.wait_until("document.querySelectorAll('mark[data-annotator-id]').length > 0",
                             "the notes to be painted back on", timeout=15)
@@ -358,8 +395,38 @@ def main() -> int:
         )
         check("the pill reports no orphans", "orphaned" not in (pill or ""), detail=str(pill))
 
+        # The review surface, in the same browser, against the same library.
+        review = Session(browser.open(f"http://127.0.0.1:{SINK_PORT}/")["webSocketDebuggerUrl"])
+        review.call("Runtime.enable")
+        review.wait_until("document.querySelectorAll('.doc').length > 0",
+                          "the library list to load")
+        check("the review page lists the page that was annotated",
+              "Anchoring" in (review.evaluate("document.querySelector('.doc .t').textContent") or ""))
+
+        review.evaluate("document.querySelector('.doc').click()")
+        review.wait_until("document.querySelectorAll('mark').length > 0",
+                          "the captured text to render with its note")
+        check("the note is painted onto the captured text too",
+              review.evaluate("document.querySelector('mark').textContent")
+              == "the quote alone is not enough")
+        check("the note itself is in the rail",
+              "this is the whole argument" in
+              (review.evaluate("document.querySelector('.note .n').textContent") or ""))
+        check("nothing is orphaned in the snapshot it was made against",
+              review.evaluate("document.querySelectorAll('.note .tag').length") == 0)
+
+        review.evaluate("document.querySelector('#prompt').click()")
+        review.wait_until("!!document.querySelector('pre.prompt')", "the rewrite prompt to build")
+        prompt_text = review.evaluate("document.querySelector('pre.prompt').textContent")
+        check("the prompt marks the passage in place",
+              "⟦1⟧the quote alone is not enough⟦/1⟧" in (prompt_text or ""))
+        check("the prompt carries the reader's note",
+              "this is the whole argument" in (prompt_text or ""))
+        check("the prompt carries the page itself",
+              "The surrounding words settle it" in (prompt_text or ""))
+
         # Turning the mode off should leave no trace on the page.
-        arm()
+        set_mode(False)
         try:
             page.wait_until("!document.querySelector('[data-annotator-ui]')",
                             "the interface to be removed", timeout=10)

@@ -33,6 +33,21 @@ Then press `Alt+A` in any tab you want to annotate. Select a passage, type why
 it caught you, press Enter. Press `Alt+A` again to switch the tab back to
 normal.
 
+## Going back over what you marked
+
+Open <http://127.0.0.1:8790/> while the sink is running. Every page you have
+annotated is listed on the left, the captured text is in the middle with your
+notes highlighted in it, and the notes themselves are in the rail on the right.
+Click a note to edit it, give it a category, or delete it. Search covers both
+what you wrote and the passages you wrote it about.
+
+A note whose passage is no longer in the captured text is shown as orphaned
+rather than quietly dropped. Pages captured more than once have a snapshot
+picker, so a note can be read against the version it was made on.
+
+The Rewrite prompt button builds the prompt below for whichever snapshot you are
+looking at, and copies it.
+
 ## Getting the rewrite prompt
 
 ```
@@ -82,6 +97,6 @@ hand is unaffected.
 
 ## Not built yet
 
-Rewriting inside Chrome. Anything for reviewing the library outside the browser.
-Search. Repairing annotations whose passage has since been rewritten, which are
-currently only counted.
+Rewriting inside Chrome, and anything that calls a model. Repairing an orphaned
+annotation by pointing it at the passage that replaced it: they are found and
+shown, but re-anchoring one is still manual.

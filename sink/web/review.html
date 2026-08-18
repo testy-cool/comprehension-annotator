@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Library</title>
+    <style>
+      :root {
+        --bg: #ffffff; --panel: #f6f7f9; --line: #e2e6ec; --ink: #1b1f24;
+        --muted: #5f6b7a; --mark: #ffe98a; --markline: #d8a800; --accent: #2f6fd0;
+        --warn: #b25a00;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #14171c; --panel: #1a1e24; --line: #2b323b; --ink: #e8ecf1;
+          --muted: #98a4b3; --mark: #6d5a15; --markline: #d8a800; --accent: #6aa6ff;
+          --warn: #ffc078;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--bg); color: var(--ink);
+        font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+        display: grid; grid-template-columns: 300px minmax(0, 1fr) 340px; height: 100vh;
+      }
+      aside, .rail { background: var(--panel); overflow-y: auto; }
+      aside { border-right: 1px solid var(--line); }
+      .rail { border-left: 1px solid var(--line); }
+      main { overflow-y: auto; padding: 26px 34px 80px; }
+      h1 { font-size: 15px; margin: 0; letter-spacing: .04em; text-transform: uppercase;
+        color: var(--muted); }
+      .pad { padding: 16px; }
+      input[type="search"], input[type="text"], textarea {
+        width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+        background: var(--bg); color: var(--ink); font: inherit;
+      }
+      textarea { min-height: 66px; resize: vertical; }
+      .doc {
+        padding: 10px 16px; border-bottom: 1px solid var(--line); cursor: pointer;
+      }
+      .doc:hover { background: var(--bg); }
+      .doc.on { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
+      .doc .t { font-weight: 600; }
+      .doc .m { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+      .page {
+        white-space: pre-wrap; overflow-wrap: anywhere; font: inherit;
+        max-width: 74ch; margin: 0;
+      }
+      mark {
+        background: var(--mark); color: inherit; border-bottom: 2px solid var(--markline);
+        border-radius: 2px; cursor: pointer; scroll-margin: 40vh;
+      }
+      mark.on { outline: 2px solid var(--accent); }
+      .note { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+      .note.on { background: var(--bg); }
+      .note .q {
+        font-size: 13px; color: var(--muted); border-left: 3px solid var(--markline);
+        padding-left: 8px; margin-bottom: 6px; cursor: pointer;
+      }
+      .note .n { white-space: pre-wrap; cursor: text; }
+      .note .n:empty::before { content: "no note"; color: var(--muted); font-style: italic; }
+      .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+      /* The controls are for the rare visit, not the common read. */
+      .note .row { display: none; }
+      .note:hover .row, .note:focus-within .row, .note.on .row { display: flex; }
+      button {
+        font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px;
+        border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer;
+      }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      button.danger { color: #d05252; }
+      .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+        margin-bottom: 4px; }
+      .head h2 { font-size: 22px; margin: 0; }
+      .meta { color: var(--muted); font-size: 13px; margin-bottom: 22px; word-break: break-all; }
+      .meta a { color: var(--accent); }
+      .banner { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid
+        var(--warn); padding: 10px 12px; border-radius: 7px; margin-bottom: 18px; font-size: 14px; }
+      .tag { font-size: 11px; color: var(--warn); text-transform: uppercase; letter-spacing: .05em; }
+      .cattag {
+        display: inline-block; margin-top: 6px; font-size: 11px; letter-spacing: .04em;
+        text-transform: uppercase; color: var(--muted); border: 1px solid var(--line);
+        border-radius: 20px; padding: 1px 8px;
+      }
+      .note:hover .cattag, .note.on .cattag { display: none; }
+      .empty { color: var(--muted); padding: 16px; }
+      pre.prompt {
+        white-space: pre-wrap; background: var(--panel); border: 1px solid var(--line);
+        border-radius: 8px; padding: 14px; font: 13px/1.55 ui-monospace, SFMono-Regular, monospace;
+        max-height: 60vh; overflow: auto;
+      }
+      select { font: inherit; padding: 4px; background: var(--bg); color: var(--ink);
+        border: 1px solid var(--line); border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <aside>
+      <div class="pad">
+        <h1>Library</h1>
+        <div class="row"><input type="search" id="q" placeholder="Search notes and pages" /></div>
+      </div>
+      <div id="list"></div>
+    </aside>
+
+    <main id="main"><p class="empty">Pick a page on the left.</p></main>
+
+    <div class="rail" id="rail"></div>
+
+    <script>
+      const TOKEN = "__TOKEN__";
+      const state = { documents: [], current: null, reading: null, focused: null };
+
+      const api = async (path) => {
+        const response = await fetch(path, { headers: { "X-Annotator-Token": TOKEN } });
+        if (!response.ok) throw new Error(`${response.status} on ${path}`);
+        return response.headers.get("content-type").includes("json")
+          ? response.json()
+          : response.text();
+      };
+
+      const patch = (id, body) =>
+        fetch(`/annotations/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", "X-Annotator-Token": TOKEN },
+          body: JSON.stringify(body),
+        });
+
+      const escape = (value) =>
+        value.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+
+      const host = (url) => {
+        try { return new URL(url).host; } catch { return url; }
+      };
+
+      const when = (iso) => (iso ? new Date(iso).toLocaleDateString() : "");
+
+      // ------------------------------------------------------------ the list
+
+      async function loadList(query) {
+        if (query) {
+          const hits = await api(`/search?q=${encodeURIComponent(query)}`);
+          const byDocument = new Map();
+          hits.documents.forEach((d) => byDocument.set(d.id, { ...d, matches: 0 }));
+          hits.annotations.forEach((a) => {
+            const existing = byDocument.get(a.document_id) || {
+              id: a.document_id, title: a.document_title, url: a.url, matches: 0,
+            };
+            existing.matches += 1;
+            byDocument.set(a.document_id, existing);
+          });
+          state.documents = [...byDocument.values()];
+        } else {
+          state.documents = (await api("/documents")).documents;
+        }
+        renderList(query);
+      }
+
+      function renderList(query) {
+        const list = document.getElementById("list");
+        if (!state.documents.length) {
+          list.innerHTML = `<p class="empty">${
+            query ? "Nothing matches." : "Nothing here yet. Annotate a page."
+          }</p>`;
+          return;
+        }
+        list.innerHTML = state.documents
+          .map((d) => {
+            const counts = d.matches
+              ? `${d.matches} match${d.matches > 1 ? "es" : ""}`
+              : `${d.annotation_count || 0} note${d.annotation_count === 1 ? "" : "s"} · ${when(
+                  d.updated_at
+                )}`;
+            return `<div class="doc ${d.id === state.current ? "on" : ""}" data-id="${d.id}">
+              <div class="t">${escape(d.title || host(d.url))}</div>
+              <div class="m">${escape(host(d.url))} · ${counts}</div>
+            </div>`;
+          })
+          .join("");
+        list.querySelectorAll(".doc").forEach((node) =>
+          node.addEventListener("click", () => open(node.dataset.id))
+        );
+      }
+
+      // --------------------------------------------------------- one document
+
+      async function open(id, snapshot) {
+        state.current = id;
+        state.reading = await api(
+          `/documents/${id}/reading` + (snapshot ? `?snapshot=${snapshot}` : "")
+        );
+        renderList(document.getElementById("q").value.trim());
+        renderDocument();
+        renderRail();
+      }
+
+      function renderDocument() {
+        const { document: doc, snapshot, text, placed, orphans } = state.reading;
+        const main = document.getElementById("main");
+
+        const options = doc.snapshots
+          .slice()
+          .reverse()
+          .map(
+            (s) =>
+              `<option value="${s.id}" ${s.id === snapshot.id ? "selected" : ""}>${when(
+                s.captured_at
+              )} · ${s.word_count} words</option>`
+          )
+          .join("");
+
+        let body = "";
+        let cursor = 0;
+        placed.forEach((item, index) => {
+          body += escape(text.slice(cursor, item.start));
+          body += `<mark data-id="${item.annotation.id}" title="${escape(
+            item.annotation.note || ""
+          )}">${escape(text.slice(item.start, item.end))}</mark>`;
+          cursor = item.end;
+        });
+        body += escape(text.slice(cursor));
+
+        main.innerHTML = `
+          <div class="head">
+            <h2>${escape(doc.title || host(doc.url))}</h2>
+            <div class="row">
+              ${doc.snapshots.length > 1 ? `<select id="snap">${options}</select>` : ""}
+              <button id="prompt" class="primary">Rewrite prompt</button>
+            </div>
+          </div>
+          <div class="meta">
+            <a href="${escape(doc.url)}" target="_blank" rel="noreferrer">${escape(doc.url)}</a>
+            · captured ${when(snapshot.captured_at)}
+            · ${placed.length} note${placed.length === 1 ? "" : "s"} here
+            ${orphans.length ? `· <span class="tag">${orphans.length} orphaned</span>` : ""}
+          </div>
+          ${
+            orphans.length
+              ? `<div class="banner">${orphans.length} note${
+                  orphans.length === 1 ? "" : "s"
+                } cannot be found in this snapshot. They are listed at the bottom of the rail,
+                   and the rewrite prompt passes them along as evidence.</div>`
+              : ""
+          }
+          <pre class="page" id="page">${body}</pre>`;
+
+        const picker = document.getElementById("snap");
+        if (picker) picker.addEventListener("change", () => open(state.current, picker.value));
+        document.getElementById("prompt").addEventListener("click", showPrompt);
+        main.querySelectorAll("mark").forEach((node) =>
+          node.addEventListener("click", () => focus(node.dataset.id))
+        );
+      }
+
+      // ------------------------------------------------------------- the rail
+
+      function renderRail() {
+        const { placed, orphans } = state.reading;
+        const rail = document.getElementById("rail");
+
+        const card = (annotation, orphan) => {
+          const category = annotation.category
+            ? `<div class="cattag">${escape(annotation.category)}</div>`
+            : "";
+          return `<div class="note ${annotation.id === state.focused ? "on" : ""}"
+                       data-id="${annotation.id}">
+            ${orphan ? '<div class="tag">not in this snapshot</div>' : ""}
+            <div class="q">${escape(annotation.quote)}</div>
+            <div class="n" data-edit="${annotation.id}">${escape(annotation.note || "")}</div>
+            ${category}
+            <div class="row">
+              <input type="text" class="cat" data-cat="${annotation.id}"
+                     placeholder="category" value="${escape(annotation.category || "")}" />
+              <button class="danger" data-del="${annotation.id}">Delete</button>
+            </div>
+          </div>`;
+        };
+
+        rail.innerHTML =
+          `<div class="pad"><h1>Notes</h1></div>` +
+          (placed.length || orphans.length
+            ? placed.map((p) => card(p.annotation, false)).join("") +
+              orphans.map((o) => card(o, true)).join("")
+            : '<p class="empty">No notes on this page.</p>');
+
+        rail.querySelectorAll("[data-edit]").forEach((node) =>
+          node.addEventListener("click", () => edit(node))
+        );
+        rail.querySelectorAll(".q").forEach((node) =>
+          node.addEventListener("click", () => focus(node.parentElement.dataset.id))
+        );
+        rail.querySelectorAll("[data-cat]").forEach((node) =>
+          node.addEventListener("change", async () => {
+            await patch(node.dataset.cat, { category: node.value.trim() || null });
+          })
+        );
+        rail.querySelectorAll("[data-del]").forEach((node) =>
+          node.addEventListener("click", async () => {
+            await patch(node.dataset.del, { status: "deleted" });
+            await open(state.current, state.reading.snapshot.id);
+            await loadList(document.getElementById("q").value.trim());
+          })
+        );
+      }
+
+      /** Turn a note into a textarea, and save it when it loses focus. */
+      function edit(node) {
+        const id = node.dataset.edit;
+        const before = node.textContent;
+        const box = document.createElement("textarea");
+        box.value = before;
+        node.replaceWith(box);
+        box.focus();
+        box.selectionStart = box.value.length;
+
+        const finish = async () => {
+          const value = box.value.trim();
+          const replacement = document.createElement("div");
+          replacement.className = "n";
+          replacement.dataset.edit = id;
+          replacement.textContent = value;
+          replacement.addEventListener("click", () => edit(replacement));
+          box.replaceWith(replacement);
+          if (value !== before) {
+            await patch(id, { note: value });
+            await open(state.current, state.reading.snapshot.id);
+          }
+        };
+        box.addEventListener("blur", finish);
+        box.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); box.blur(); }
+          if (event.key === "Escape") { box.value = before; box.blur(); }
+        });
+      }
+
+      function focus(id) {
+        state.focused = id;
+        document.querySelectorAll("mark").forEach((m) => m.classList.toggle("on", m.dataset.id === id));
+        document.querySelectorAll(".note").forEach((n) => n.classList.toggle("on", n.dataset.id === id));
+        const target = document.querySelector(`mark[data-id="${id}"]`);
+        if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+        const note = document.querySelector(`.note[data-id="${id}"]`);
+        if (note) note.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+
+      async function showPrompt() {
+        const snapshot = state.reading.snapshot.id;
+        const text = await api(`/documents/${state.current}/prompt?snapshot=${snapshot}`);
+        const main = document.getElementById("main");
+        main.insertAdjacentHTML(
+          "afterbegin",
+          `<div id="promptbox"><div class="row">
+             <button id="copy" class="primary">Copy</button>
+             <button id="close">Close</button>
+             <span id="copied" class="tag"></span>
+           </div><pre class="prompt">${escape(text)}</pre></div>`
+        );
+        document.getElementById("copy").addEventListener("click", async () => {
+          await navigator.clipboard.writeText(text);
+          document.getElementById("copied").textContent = "copied";
+        });
+        document
+          .getElementById("close")
+          .addEventListener("click", () => document.getElementById("promptbox").remove());
+      }
+
+      const search = document.getElementById("q");
+      let typing;
+      search.addEventListener("input", () => {
+        clearTimeout(typing);
+        typing = setTimeout(() => loadList(search.value.trim()), 180);
+      });
+
+      loadList("");
+    </script>
+  </body>
+</html>

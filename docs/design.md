@@ -78,7 +78,10 @@ reason: the anchor is a search for this exact string.
     PATCH /annotations/<id>           → edit the note, or set status "deleted"
     GET  /documents?url=<url>         → the Document and its Annotations, for redrawing highlights
     GET  /documents                   → the list
+    GET  /documents/<id>/reading      → one snapshot's text with every annotation located in it
     GET  /documents/<id>/prompt       → the rewrite prompt for one snapshot
+    GET  /search?q=                   → annotations and pages matching a phrase
+    GET  /                            → the review surface
 
 The extension also answers a few messages internally. `annotator:toggle` arms or
 disarms a tab and is what a popup, or the end-to-end test, uses to do what Alt+A
@@ -98,6 +101,18 @@ The sink binds 127.0.0.1 only. It generates a token on first run into
 header, and rejects any request whose Origin is not the extension. The custom
 header forces a CORS preflight, so a hostile page cannot post into the library.
 
+## The review surface
+
+Served by the sink at `/` as one HTML file with its CSS and JavaScript inline,
+for the same reason the extension has no build step. It reads `/reading`, which
+resolves every Annotation against a Snapshot's markdown and hands back both the
+text and the offsets, so the page renders highlights without needing to know how
+anchoring works.
+
+The token is substituted into the page as it is served. That is safe for the
+same reason the sink is: it listens on loopback only, and the CORS rules keep a
+page you happen to be visiting from reading the response.
+
 ## Repository layout
 
     extension/     MV3, plain JavaScript, loaded unpacked
@@ -108,6 +123,9 @@ header forces a CORS preflight, so a hostile page cannot post into the library.
       options.html/js  sink url, token, connection check
       icons/
     sink/          Python, uv, FastAPI, trafilatura for readable text
+      anchor.py      the resolver, mirroring extension/anchor.js
+      rewrite.py     the prompt, from templates/rewrite.md
+      web/           the review surface, one file
     tests/         pytest over the sink
       js/          node and jsdom over anchoring and the queue
       e2e/         the real extension in a real browser
@@ -135,6 +153,6 @@ Annotations that no longer resolve are listed separately rather than dropped.
 
 ## Deliberately not in v1
 
-Rewriting inside Chrome, and anything that calls a model. A desktop or web review
-tool over the library. Search across Documents. Categories and tagging in the UI.
-PDFs and non-HTML documents. Any syncing between machines.
+Rewriting inside Chrome, and anything that calls a model. Repairing an orphaned
+Annotation by re-pointing it at the passage that replaced it. PDFs and non-HTML
+documents. Any syncing between machines.

@@ -270,6 +270,46 @@ class Library:
         index["updated_at"] = _iso(now)
         _write_json(self.index_path, index)
 
+    def search(self, query: str, limit: int = 200) -> dict:
+        """Find annotations and documents by their words.
+
+        A linear scan. The library is a reading habit, not a corpus, and an
+        index would be one more thing that can disagree with the files.
+        """
+        needle = query.strip().lower()
+        if not needle:
+            return {"documents": [], "annotations": []}
+
+        documents: list[dict] = []
+        annotations: list[dict] = []
+        for doc_id in self._document_ids():
+            document = self.load_document(doc_id)
+            if document is None:
+                continue
+            haystack = f"{document.get('title', '')} {document.get('url', '')}".lower()
+            if needle in haystack:
+                documents.append(
+                    {
+                        "id": doc_id,
+                        "title": document.get("title", ""),
+                        "url": document.get("url", ""),
+                        "updated_at": document.get("updated_at", ""),
+                    }
+                )
+            for record in self.annotations(doc_id):
+                text = f"{record.get('quote', '')} {record.get('note', '')}".lower()
+                if needle in text:
+                    annotations.append(
+                        {
+                            "document_id": doc_id,
+                            "document_title": document.get("title", ""),
+                            "url": document.get("url", ""),
+                            **record,
+                        }
+                    )
+        annotations.sort(key=lambda r: r.get("updated_at", ""), reverse=True)
+        return {"documents": documents[:limit], "annotations": annotations[:limit]}
+
     def list_documents(self) -> list[dict]:
         index = _read_json(self.index_path, {"documents": {}})
         entries = [{"id": k, **v} for k, v in index.get("documents", {}).items()]
