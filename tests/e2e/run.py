@@ -134,6 +134,21 @@ class Session:
             raise RuntimeError(json.dumps(result["exceptionDetails"])[:400])
         return result["result"].get("value")
 
+    def wait_until(self, expression: str, what: str, timeout: float = 20):
+        """Poll until the page is actually ready to be talked to."""
+        deadline = time.time() + timeout
+        last = None
+        while time.time() < deadline:
+            try:
+                value = self.evaluate(expression)
+                if value:
+                    return value
+                last = value
+            except RuntimeError as error:
+                last = str(error)[:120]
+            time.sleep(0.3)
+        raise RuntimeError(f"timed out waiting for {what}; last saw {last}")
+
     def close(self) -> None:
         self.socket.close()
 
@@ -203,6 +218,10 @@ def main() -> int:
             browser.open(f"chrome-extension://{extension_id}/options.html")["webSocketDebuggerUrl"]
         )
         options.call("Runtime.enable")
+        options.wait_until(
+            "typeof chrome !== 'undefined' && !!chrome.storage && !!chrome.tabs",
+            "the options page to finish loading with its extension apis",
+        )
         options.evaluate(
             "chrome.storage.local.set({settings:{sinkUrl:'http://127.0.0.1:%d',token:'%s'}})"
             % (SINK_PORT, token)
@@ -221,11 +240,11 @@ def main() -> int:
         page = Session(tab["webSocketDebuggerUrl"])
         page.call("Runtime.enable")
         page.call("Page.enable")
-        time.sleep(1.0)
+        page.wait_until("document.readyState === 'complete'", "the test page to load")
 
         armed = arm()
         check("arming the tab reports the mode is on", bool(armed and armed.get("on")))
-        time.sleep(1.5)
+        page.wait_until("!!document.querySelector('[data-annotator-ui]')", "the interface to mount")
 
         check(
             "the extension mounts its interface only after the tab is armed",
@@ -253,9 +272,8 @@ def main() -> int:
             return true;
           })()
         """)
-        time.sleep(0.6)
-
         shadow = "document.querySelector('[data-annotator-ui]').shadowRoot"
+        page.wait_until(f"!!{shadow}.querySelector('.card')", "the bubble to open")
         check("a bubble opens beside the selection", page.evaluate(f"!!{shadow}.querySelector('.card')"))
         check(
             "the bubble shows the passage that was selected",
@@ -271,7 +289,9 @@ def main() -> int:
             return true;
           }})()
         """)
-        time.sleep(2.0)
+        page.wait_until("document.querySelectorAll('mark[data-annotator-id]').length > 0",
+                        "the passage to be highlighted")
+        time.sleep(1.5)  # the note travels to the sink after the highlight appears
 
         check("the bubble closes once the note is saved",
               not page.evaluate(f"!!{shadow}.querySelector('.card')"))
@@ -315,11 +335,17 @@ def main() -> int:
 
         # Reload, arm again, and see whether the note comes back.
         page.call("Page.reload")
-        time.sleep(1.5)
+        page.wait_until("document.readyState === 'complete'", "the reload to finish")
+        page.wait_until("!document.querySelector('[data-annotator-ui]')",
+                        "the reload to take the interface with it")
         again = arm()
         check("a reloaded page can be armed again with one press",
               bool(again and again.get("on")))
-        time.sleep(2.0)
+        try:
+            page.wait_until("document.querySelectorAll('mark[data-annotator-id]').length > 0",
+                            "the notes to be painted back on", timeout=15)
+        except RuntimeError:
+            pass
 
         check("returning to the page paints the note back on",
               page.evaluate("document.querySelectorAll('mark[data-annotator-id]').length") == 1)
@@ -334,7 +360,11 @@ def main() -> int:
 
         # Turning the mode off should leave no trace on the page.
         arm()
-        time.sleep(1.0)
+        try:
+            page.wait_until("!document.querySelector('[data-annotator-ui]')",
+                            "the interface to be removed", timeout=10)
+        except RuntimeError:
+            pass
         check("switching off removes every highlight",
               page.evaluate("document.querySelectorAll('mark[data-annotator-id]').length") == 0)
         check("switching off removes the interface",

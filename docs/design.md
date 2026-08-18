@@ -79,6 +79,12 @@ reason: the anchor is a search for this exact string.
     GET  /documents?url=<url>         → the Document and its Annotations, for redrawing highlights
     GET  /documents                   → the list, for a future review tool
 
+The extension also answers a few messages internally. `annotator:toggle` arms or
+disarms a tab and is what a popup, or the end-to-end test, uses to do what Alt+A
+does; `annotator:save`, `annotator:patch`, `annotator:fetch` and
+`annotator:health` are how the content script reaches the sink, since only the
+service worker holds the token.
+
 `POST /annotate` carries the annotation, the URL, the title and the sha256 of
 the current DOM. It carries the HTML itself only when the sink asks for it: if
 the hash is already the Document's latest Snapshot the sink answers `deduped`,
@@ -97,10 +103,13 @@ header forces a CORS preflight, so a hostile page cannot post into the library.
       manifest.json
       background.js    mode toggle, injection, queue, flush, badge
       content.js       bubble, selection, anchor extraction, highlight drawing
-      anchor.js        quote/prefix/suffix extraction and resolution, shared
-      options.html/js  sink url, token, library root
+      anchor.js        quote/prefix/suffix extraction and resolution
+      options.html/js  sink url, token, connection check
+      icons/
     sink/          Python, uv, FastAPI, trafilatura for readable text
-    tests/         pytest over the sink: url normalisation, hash dedupe, idempotent retries, anchor resolution
+    tests/         pytest over the sink
+      js/          node and jsdom over anchoring and the queue
+      e2e/         the real extension in a real browser
     library/       gitignored
 
 ## Interaction detail
