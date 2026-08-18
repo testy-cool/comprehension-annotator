@@ -3,9 +3,8 @@
 Mark passages while you read, and keep them, with the page they came from, on
 your own disk.
 
-The point of collecting them is what happens later: feeding a page and your
-notes on it to an agent that rewrites the text into something you can take in
-faster. That part is not built yet. This is the collecting.
+The point of collecting them is what happens next: feeding a page and your notes
+on it to an agent that rewrites the text into something you can take in faster.
 
 Read [CONTEXT.md](CONTEXT.md) for what the words mean, [docs/design.md](docs/design.md)
 for how it fits together, and [docs/adr/](docs/adr/) for why.
@@ -33,6 +32,21 @@ options, paste the token, and press Test connection.
 Then press `Alt+A` in any tab you want to annotate. Select a passage, type why
 it caught you, press Enter. Press `Alt+A` again to switch the tab back to
 normal.
+
+## Getting the rewrite prompt
+
+```
+uv run python -m sink list                        what is in the library
+uv run python -m sink prompt rate-limits          the prompt for one page
+```
+
+The target can be a full url, a document id, or enough of a url to be
+unambiguous. The prompt carries the page, your notes marked in place with
+`⟦1⟧ … ⟦/1⟧`, and instructions for the rewrite. Notes whose passage is no longer
+in the captured text are passed along separately, as evidence of what you found
+hard rather than as places in this version.
+
+Nothing here calls a model. Pipe it to whichever one you want.
 
 ## What lands on disk
 
@@ -68,6 +82,6 @@ hand is unaffected.
 
 ## Not built yet
 
-The rewrite pass and its prompt. Anything for reviewing the library outside the
-browser. Search. Repairing annotations whose passage has since been rewritten,
-which are currently only counted.
+Rewriting inside Chrome. Anything for reviewing the library outside the browser.
+Search. Repairing annotations whose passage has since been rewritten, which are
+currently only counted.

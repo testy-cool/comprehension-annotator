@@ -77,7 +77,8 @@ reason: the anchor is a search for this exact string.
     POST /annotate                    → {document_id, snapshot_id, deduped, need_html}
     PATCH /annotations/<id>           → edit the note, or set status "deleted"
     GET  /documents?url=<url>         → the Document and its Annotations, for redrawing highlights
-    GET  /documents                   → the list, for a future review tool
+    GET  /documents                   → the list
+    GET  /documents/<id>/prompt       → the rewrite prompt for one snapshot
 
 The extension also answers a few messages internally. `annotator:toggle` arms or
 disarms a tab and is what a popup, or the end-to-end test, uses to do what Alt+A
@@ -123,8 +124,17 @@ header forces a CORS preflight, so a hostile page cannot post into the library.
   counted as Orphans and reported in the bubble's header. Reviewing and
   repairing Orphans is not in v1.
 
+## The rewrite prompt
+
+`sink/templates/rewrite.md` is the instruction text, kept as a file so it can be
+argued with. `sink/rewrite.py` fills it in: the Annotations are resolved against
+the Snapshot's markdown by `sink/anchor.py`, which is a deliberate mirror of
+`extension/anchor.js` so a passage is found the same way in both places, then
+wrapped in `⟦n⟧` markers working backwards so earlier offsets stay correct.
+Annotations that no longer resolve are listed separately rather than dropped.
+
 ## Deliberately not in v1
 
-The rewrite prompt and the agent that consumes it. A desktop or web review tool
-over the library. Search across Documents. Categories and tagging in the UI.
+Rewriting inside Chrome, and anything that calls a model. A desktop or web review
+tool over the library. Search across Documents. Categories and tagging in the UI.
 PDFs and non-HTML documents. Any syncing between machines.

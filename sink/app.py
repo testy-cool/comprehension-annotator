@@ -10,10 +10,12 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from .auth import EXTENSION_ORIGIN, matches
 from .library import Library
+from .rewrite import build_prompt
 from .urls import document_id
 
 VERSION = "0.1.0"
@@ -120,6 +122,29 @@ def create_app(library: Library, token: str) -> FastAPI:
         if found is None:
             raise HTTPException(status_code=404, detail="no such document")
         return {"document": found, "annotations": library.annotations(doc_id)}
+
+    def _snapshot_of(doc_id: str, wanted: str | None) -> tuple[dict, dict]:
+        found = library.load_document(doc_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail="no such document")
+        snapshots = found.get("snapshots") or []
+        if wanted:
+            chosen = next((s for s in snapshots if s["id"] == wanted), None)
+            if chosen is None:
+                raise HTTPException(status_code=404, detail="no such snapshot")
+        else:
+            chosen = library.latest_snapshot(found)
+        if chosen is None:
+            raise HTTPException(status_code=409, detail="this document has no snapshot")
+        return found, chosen
+
+    @app.get("/documents/{doc_id}/prompt", response_class=PlainTextResponse,
+             dependencies=[Depends(authorize)])
+    def prompt(doc_id: str, snapshot: str | None = Query(default=None)) -> str:
+        found, chosen = _snapshot_of(doc_id, snapshot)
+        text = library.snapshot_text(doc_id, chosen["id"])
+        document = dict(found, snapshots=[chosen])
+        return build_prompt(document, library.annotations(doc_id), text)
 
     return app
 

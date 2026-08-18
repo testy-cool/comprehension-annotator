@@ -130,3 +130,35 @@ def test_a_page_only_the_extension_could_render_is_kept_verbatim(client):
     detail = client.get(f"/documents/{doc_id}").json()
     snapshot = detail["document"]["snapshots"][0]
     assert snapshot["hash"] == sha256(rendered)
+
+
+# ---------------------------------------------------------------- prompts
+
+
+def article(text):
+    return HTML.format(text)
+
+
+LONG = (
+    "A phrase can appear forty times on one page, so the quote alone is not enough. "
+    "The surrounding words settle it, and the quote alone is not enough without them."
+)
+
+
+def stock(client, url="https://ex.com/a", body=None, ident="ann-1", **over):
+    body = body or article(LONG)
+    payload = {
+        "url": url, "title": "Anchoring", "dom_hash": sha256(body), "html": body,
+        "annotation": annotation(ident, **over),
+    }
+    return client.post("/annotate", json=payload).json()
+
+
+def test_the_prompt_carries_the_page_and_the_notes_marked_in_place(client):
+    stored = stock(client, quote="forty times", prefix="appear ", note="the core problem")
+    prompt = client.get(f"/documents/{stored['document_id']}/prompt").text
+
+    assert "⟦1⟧forty times⟦/1⟧" in prompt
+    assert "the core problem" in prompt
+    assert "https://ex.com/a" in prompt
+    assert "Rewrite the whole page" in prompt

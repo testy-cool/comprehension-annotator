@@ -46,3 +46,8 @@ _Avoid_: Store, database, archive, vault
 An Annotation whose Anchor no longer resolves against the page in front of the
 reader, because the wording changed or the passage was removed.
 _Avoid_: Broken, stale, lost, unmatched
+
+**Rewrite prompt**:
+The text handed to an agent to rewrite one Snapshot, carrying the page, the
+reader's Annotations marked in place, and the instructions for the rewrite.
+_Avoid_: Export, bundle, payload

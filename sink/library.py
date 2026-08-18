@@ -98,6 +98,19 @@ class Library:
             "snapshots": [],
         }
 
+    def latest_snapshot(self, document: dict) -> dict | None:
+        snapshots = document.get("snapshots") or []
+        return snapshots[-1] if snapshots else None
+
+    def snapshot_text(self, doc_id: str, snapshot_id: str) -> str:
+        """The readable text derived from one Snapshot, which is what a rewrite reads."""
+        path = self.document_dir(doc_id) / "snapshots" / f"{snapshot_id}.md"
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def snapshot_html(self, doc_id: str, snapshot_id: str) -> str:
+        path = self.document_dir(doc_id) / "snapshots" / f"{snapshot_id}.html"
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
     def snapshot_with_hash(self, document: dict, dom_hash: str) -> dict | None:
         """A page can be revisited unchanged, or revert to a shape we already hold."""
         for snapshot in document.get("snapshots", []):
