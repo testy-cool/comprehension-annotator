@@ -1,0 +1,12 @@
+{
+  "name": "comprehension-annotator-extension",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Tests for the extension's anchoring. The extension itself has no build step.",
+  "scripts": {
+    "test": "node --test tests/js/*.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}
