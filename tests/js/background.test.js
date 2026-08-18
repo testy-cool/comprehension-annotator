@@ -47,6 +47,9 @@ function fakeChrome() {
       async sendMessage() {
         return null;
       },
+      async get(id) {
+        return { id: id, url: "https://ex.com/a" };
+      },
     },
     scripting: { async executeScript() {} },
     alarms: { create() {}, onAlarm: on("alarm") },
@@ -329,4 +332,30 @@ test("a rejected token is never counted against a note", async () => {
   await ready(context, sink);
   await context.flush();
   assert.ok(sink.annotations.has("ann-1"));
+});
+
+test("reloading a page clears the mode so the next press arms it again", async () => {
+  const { chrome, context } = load();
+  await context.setMode(7, true);
+  assert.equal(await context.isOn(7), true);
+
+  // A reload reports no url, because the url did not change.
+  await chrome._listeners.updated(7, { status: "loading" });
+  assert.equal(await context.isOn(7), false);
+});
+
+test("navigating away clears the mode too", async () => {
+  const { chrome, context } = load();
+  await context.setMode(7, true);
+  await chrome._listeners.updated(7, { status: "loading", url: "https://ex.com/b" });
+  assert.equal(await context.isOn(7), false);
+});
+
+test("an extension page can arm and disarm a tab", async () => {
+  const { context } = load();
+  const armed = await context.handle({ type: "annotator:toggle", tabId: 5 });
+  assert.deepEqual(armed, { ok: true, on: true });
+
+  const disarmed = await context.handle({ type: "annotator:toggle", tabId: 5 });
+  assert.deepEqual(disarmed, { ok: true, on: false });
 });

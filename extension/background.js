@@ -256,9 +256,13 @@ chrome.commands.onCommand.addListener(async (command) => {
   await toggle(tab);
 });
 
-// A navigation takes the content script with it, so the mode goes too.
+// Any load takes the content script with it, so the mode goes too. This has to
+// include a plain reload, where the url does not change: leaving the flag set
+// would make the next press turn an already-dead mode "off" and do nothing
+// visible. Re-arming by itself is not an option, because injection needs the
+// gesture that activeTab is granted by.
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
-  if (changeInfo.status === "loading" && changeInfo.url !== undefined) {
+  if (changeInfo.status === "loading") {
     await setMode(tabId, false);
     await refreshBadge(tabId);
   }
@@ -304,6 +308,13 @@ async function handle(message, sender) {
       }
       const result = await flush();
       return { ok: true, flushed: result.ok, error: result.error, pending: await pendingCount() };
+    }
+    case "annotator:toggle": {
+      const target = message.tabId
+        ? await chrome.tabs.get(message.tabId)
+        : (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+      await toggle(target);
+      return { ok: true, on: await isOn(target.id) };
     }
     case "annotator:health": {
       const { sinkUrl } = await settings();
