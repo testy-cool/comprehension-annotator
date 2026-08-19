@@ -1,0 +1,23 @@
+[Unit]
+Description=Comprehension annotator sink
+Documentation=https://github.com/testy-cool/comprehension-annotator
+After=default.target
+
+[Service]
+Type=exec
+WorkingDirectory=%h/Work/try-rs/comprehension-annotator
+ExecStart=%h/Work/try-rs/comprehension-annotator/.venv/bin/python -m sink serve
+Restart=always
+RestartSec=5
+# The sink is the only writer, and everything it writes lives in these two places.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/Work/try-rs/comprehension-annotator/library %h/.config/comprehension-annotator
+PrivateTmp=true
+NoNewPrivileges=true
+# It listens on loopback only. Nothing here needs to reach the network.
+IPAddressAllow=localhost
+IPAddressDeny=any
+
+[Install]
+WantedBy=default.target

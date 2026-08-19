@@ -25,6 +25,25 @@ On first run it prints where it put the token. Read it back with:
 uv run python -m sink --print-token
 ```
 
+To stop starting it by hand, install it as a user service. It then comes back
+after a reboot without anyone logging in, because lingering is on.
+
+```
+cp packaging/comprehension-annotator.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now comprehension-annotator
+```
+
+```
+systemctl --user status comprehension-annotator      is it up
+journalctl --user -u comprehension-annotator -f      what it is doing
+systemctl --user restart comprehension-annotator     after changing the code
+```
+
+The unit can only write to the library and the token directory, and can only
+talk to loopback. Both are true of the sink anyway, so this only makes a bug
+in it less interesting.
+
 Load the extension in Chrome from `chrome://extensions` with developer mode
 turned on, then Load unpacked and pick the `extension/` directory. Open its
 options, paste the token, and press Test connection.
