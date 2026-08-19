@@ -202,6 +202,33 @@ var AnnotatorAnchor = (function () {
     });
   }
 
+  /**
+   * The page as it was before we touched it.
+   *
+   * Painting a highlight rewrites the DOM, so capturing after painting stores
+   * our own markup and gives the same unchanged page a different hash on every
+   * annotation. Work on a clone: the reader keeps their highlights, and a page
+   * that has not changed hashes the same however many notes are on it.
+   */
+  function capture() {
+    var clone = document.documentElement.cloneNode(true);
+
+    var ours = clone.querySelectorAll("[data-annotator-ui]");
+    Array.prototype.forEach.call(ours, function (node) {
+      node.parentNode.removeChild(node);
+    });
+
+    var marks = clone.querySelectorAll("mark[data-annotator-id]");
+    Array.prototype.forEach.call(marks, function (mark) {
+      var parent = mark.parentNode;
+      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+      parent.removeChild(mark);
+      parent.normalize();
+    });
+
+    return clone.outerHTML;
+  }
+
   return {
     CONTEXT: CONTEXT,
     buildIndex: buildIndex,
@@ -209,6 +236,7 @@ var AnnotatorAnchor = (function () {
     resolve: resolve,
     highlight: highlight,
     unhighlight: unhighlight,
+    capture: capture,
     collapseString: collapseString,
   };
 })();

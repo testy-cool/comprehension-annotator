@@ -177,3 +177,42 @@ test("script and style contents are never part of the page text", () => {
   const index = anchor.buildIndex(document.body);
   assert.equal(index.text.trim(), "real text");
 });
+
+test("capture leaves out the marks we painted and the UI we injected", () => {
+  const { anchor, document } = load(ARTICLE);
+  const host = document.createElement("div");
+  host.setAttribute("data-annotator-ui", "");
+  host.textContent = "bubble";
+  document.body.appendChild(host);
+
+  const index = anchor.buildIndex();
+  const at = index.text.indexOf("forty times");
+  anchor.highlight(index, at, at + "forty times".length, "a1");
+  assert.ok(document.querySelector("mark[data-annotator-id]"), "painted, so there is something to strip");
+
+  const html = anchor.capture();
+  assert.ok(!html.includes("data-annotator-id"), "no marks of ours in the captured page");
+  assert.ok(!html.includes("data-annotator-ui"), "no UI of ours in the captured page");
+  assert.ok(html.includes("forty times"), "the words the mark wrapped are still there");
+});
+
+test("capture is the same before and after painting, so a page dedupes to one snapshot", () => {
+  const { anchor, document } = load(ARTICLE);
+  const before = anchor.capture();
+
+  const index = anchor.buildIndex();
+  const at = index.text.indexOf("settle it");
+  anchor.highlight(index, at, at + "settle it".length, "a1");
+
+  assert.equal(anchor.capture(), before);
+});
+
+test("capture does not disturb the live page", () => {
+  const { anchor, document } = load(ARTICLE);
+  const index = anchor.buildIndex();
+  const at = index.text.indexOf("forty times");
+  anchor.highlight(index, at, at + "forty times".length, "a1");
+
+  anchor.capture();
+  assert.ok(document.querySelector('mark[data-annotator-id="a1"]'), "the reader still sees their highlight");
+});

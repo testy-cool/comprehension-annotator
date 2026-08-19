@@ -11,6 +11,7 @@ debugging port.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -372,6 +373,50 @@ def main() -> int:
             check("the derived text contains the article",
                   "forty times" in markdown[0].read_text())
 
+        if snapshots:
+            captured = snapshots[0].read_text()
+            check("the captured page is free of the highlight we painted",
+                  "data-annotator-id" not in captured)
+            check("the captured page is free of our own interface",
+                  "data-annotator-ui" not in captured)
+
+        # A second note on the same unchanged page. It must not make a second
+        # snapshot: highlighting the first passage changed the DOM, and if that
+        # is what gets captured, every note stores the whole page again.
+        page.evaluate("""
+          (() => {
+            const node = document.getElementById('one').firstChild;
+            const at = node.nodeValue.indexOf('forty times');
+            const range = document.createRange();
+            range.setStart(node, at);
+            range.setEnd(node, at + 'forty times'.length);
+            const selection = getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            document.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+            return true;
+          })()
+        """)
+        page.wait_until(f"!!{shadow}.querySelector('.card')", "the second bubble to open")
+        page.evaluate(f"""
+          (() => {{
+            const note = {shadow}.querySelector('textarea');
+            note.value = 'and this is the example';
+            note.dispatchEvent(new KeyboardEvent('keydown', {{key: 'Enter', bubbles: true}}));
+            return true;
+          }})()
+        """)
+        page.wait_until("document.querySelectorAll('mark[data-annotator-id]').length > 1",
+                        "the second passage to be highlighted")
+        time.sleep(1.5)
+
+        stored = sink_call(
+            f"/documents?url=http://127.0.0.1:{PAGE_PORT}/index.html", token
+        )
+        check("both notes are on disk", len(stored["annotations"]) == 2)
+        check("a second note on an unchanged page does not capture it again",
+              len(list((library / "documents").glob("*/snapshots/*.html"))) == 1)
+
         # Reload, arm again, and see whether the note comes back.
         page.call("Page.reload")
         page.wait_until("document.readyState === 'complete'", "the reload to finish")
@@ -384,10 +429,11 @@ def main() -> int:
         except RuntimeError:
             pass
 
-        check("returning to the page paints the note back on",
-              page.evaluate("document.querySelectorAll('mark[data-annotator-id]').length") == 1)
-        check("and paints it in the right place",
-              page.evaluate("document.getElementById('two').querySelector('mark') !== null"))
+        check("returning to the page paints both notes back on",
+              page.evaluate("document.querySelectorAll('mark[data-annotator-id]').length") == 2)
+        check("and paints them in the right places",
+              page.evaluate("document.getElementById('two').querySelector('mark') !== null && "
+                            "document.getElementById('one').querySelector('mark') !== null"))
         pill = page.evaluate(
             "(document.querySelector('[data-annotator-ui]')||{shadowRoot:null}).shadowRoot"
             " ? document.querySelector('[data-annotator-ui]').shadowRoot"
@@ -406,20 +452,29 @@ def main() -> int:
         review.evaluate("document.querySelector('.doc').click()")
         review.wait_until("document.querySelectorAll('mark').length > 0",
                           "the captured text to render with its note")
-        check("the note is painted onto the captured text too",
-              review.evaluate("document.querySelector('mark').textContent")
-              == "the quote alone is not enough")
-        check("the note itself is in the rail",
-              "this is the whole argument" in
-              (review.evaluate("document.querySelector('.note .n').textContent") or ""))
+        marked = review.evaluate(
+            "Array.from(document.querySelectorAll('mark')).map(m => m.textContent)") or []
+        check("both notes are painted onto the captured text too",
+              sorted(marked) == sorted(["the quote alone is not enough", "forty times"]),
+              detail=json.dumps(marked))
+        rail = review.evaluate(
+            "Array.from(document.querySelectorAll('.note .n')).map(n => n.textContent).join(' | ')") or ""
+        check("the notes themselves are in the rail",
+              "this is the whole argument" in rail and "and this is the example" in rail,
+              detail=rail)
         check("nothing is orphaned in the snapshot it was made against",
               review.evaluate("document.querySelectorAll('.note .tag').length") == 0)
 
         review.evaluate("document.querySelector('#prompt').click()")
         review.wait_until("!!document.querySelector('pre.prompt')", "the rewrite prompt to build")
         prompt_text = review.evaluate("document.querySelector('pre.prompt').textContent")
-        check("the prompt marks the passage in place",
-              "⟦1⟧the quote alone is not enough⟦/1⟧" in (prompt_text or ""))
+        marks_in_prompt = re.findall(r"⟦(\d+)⟧(.*?)⟦/\1⟧", prompt_text or "")
+        # The instructions explain the markers using "⟦1⟧ … ⟦/1⟧", so match on the
+        # passages themselves rather than on how many pairs of markers there are.
+        marked_passages = {text for _, text in marks_in_prompt}
+        check("the prompt marks both passages in place",
+              {"forty times", "the quote alone is not enough"} <= marked_passages,
+              detail=json.dumps(sorted(marked_passages)))
         check("the prompt carries the reader's note",
               "this is the whole argument" in (prompt_text or ""))
         check("the prompt carries the page itself",

@@ -273,7 +273,7 @@
         type: "annotator:save",
         url: location.href,
         title: document.title,
-        html: document.documentElement.outerHTML,
+        html: A.capture(),
         annotation: annotation,
       },
       function (response) {
