@@ -33,7 +33,7 @@
     ".pill{bottom:16px;right:16px;padding:6px 10px;opacity:.9;cursor:default;}",
     ".head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;",
     "font-weight:600;letter-spacing:.02em;}",
-    ".sub{font-weight:400;color:#98a2b3;font-size:11px;}",
+    ".sub{font-weight:400;color:#98a2b3;font-size:12px;}",
     "blockquote{margin:0 0 8px;padding:6px 8px;background:#262b31;border-left:3px solid #e0b400;",
     "border-radius:4px;color:#e6e9ee;max-height:88px;overflow:auto;white-space:pre-wrap;}",
     "textarea{width:100%;box-sizing:border-box;min-height:74px;resize:vertical;padding:8px;",
@@ -46,7 +46,7 @@
     "button.primary{background:#2f6fd0;border-color:#2f6fd0;}",
     "button.danger{background:transparent;color:#ff9b9b;border-color:#5a3a3a;}",
     ".spacer{flex:1}",
-    ".hint{color:#98a2b3;font-size:11px;margin-top:6px;}",
+    ".hint{color:#98a2b3;font-size:12px;margin-top:6px;}",
     ".warn{color:#ffcf7a;}",
   ].join("");
 
