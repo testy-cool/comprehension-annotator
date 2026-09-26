@@ -27,7 +27,8 @@ CDP_PORT = 9333
 SINK_PORT = 8792
 PAGE_PORT = 8793
 
-PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Anchoring</title></head>
+PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Anchoring</title>
+<style>article{max-width:520px}</style></head>
 <body><article>
 <p id="one">A phrase can appear forty times on one page, so the quote alone is not enough.</p>
 <p id="two">The surrounding words settle it, and the quote alone is not enough without them.</p>
@@ -440,6 +441,22 @@ def main() -> int:
             ".querySelector('.pill').textContent : ''"
         )
         check("the pill reports no orphans", "orphaned" not in (pill or ""), detail=str(pill))
+        notes = page.evaluate("""(() => {
+          const root = document.querySelector('[data-annotator-ui]').shadowRoot;
+          const text = document.querySelector('article').getBoundingClientRect();
+          return [...root.querySelectorAll('.note')].map(n => {
+            const r = n.getBoundingClientRect();
+            return {text: n.textContent, left: r.left, top: r.top, bottom: r.bottom,
+                    column: text.right, size: parseFloat(getComputedStyle(n).fontSize)};
+          });
+        })()""")
+        check("each note is shown in the margin", len(notes) == 2, detail=str(notes))
+        check("the notes sit beside the text, not over it",
+              all(n["left"] >= n["column"] for n in notes), detail=str(notes))
+        ordered = sorted(notes, key=lambda n: n["top"])
+        check("the notes do not overlap each other",
+              len(ordered) < 2 or ordered[0]["bottom"] <= ordered[1]["top"], detail=str(notes))
+        check("the notes are readable size", all(n["size"] >= 12 for n in notes))
 
         # The review surface, in the same browser, against the same library.
         review = Session(browser.open(f"http://127.0.0.1:{SINK_PORT}/")["webSocketDebuggerUrl"])

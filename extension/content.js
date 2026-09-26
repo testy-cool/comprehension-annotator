@@ -48,6 +48,13 @@
     ".spacer{flex:1}",
     ".hint{color:#98a2b3;font-size:12px;margin-top:6px;}",
     ".warn{color:#ffcf7a;}",
+    ".note{position:fixed;z-index:2147483646;width:240px;box-sizing:border-box;",
+    "padding:8px 10px;font:14px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;",
+    "color:#e6e9ee;background:#1c1f24;border:1px solid #3a4048;border-left:3px solid #e0b400;",
+    "border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.3);cursor:pointer;",
+    "white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;}",
+    ".note.empty{color:#98a2b3;font-style:italic;}",
+    ".note.hot{border-color:#e0b400;background:#262b31;}",
   ].join("");
 
   // ------------------------------------------------------------------ mount
@@ -70,6 +77,7 @@
 
   function unmount() {
     if (state.host && state.host.parentNode) state.host.parentNode.removeChild(state.host);
+    state.notes = {};
     state.host = null;
     state.shadow = null;
     state.bubble = null;
@@ -105,6 +113,114 @@
         }
       }, 4000);
     }
+  }
+
+  // ------------------------------------------------------------ margin notes
+  // Each note sits in the right margin level with its passage. They are fixed
+  // to the viewport and re-laid on every scroll, which also keeps them in step
+  // with passages inside a scrolling pane rather than the page itself.
+
+  var NOTE_WIDTH = 240;
+  var NOTE_GAP = 16;
+  var BLOCKS = "p,li,blockquote,h1,h2,h3,h4,h5,h6,dd,dt,pre,td,figcaption";
+  state.notes = {};
+  var laying = false;
+
+  function renderNotes() {
+    if (!state.shadow) return;
+    var wanted = {};
+    state.annotations.forEach(function (annotation) {
+      wanted[annotation.id] = true;
+      var box = state.notes[annotation.id];
+      if (!box) {
+        box = document.createElement("div");
+        box.setAttribute("data-id", annotation.id);
+        box.addEventListener("click", function () {
+          var mark = firstMark(annotation.id);
+          if (mark) editAnnotation(annotation.id, mark.getBoundingClientRect());
+        });
+        box.addEventListener("mouseenter", function () {
+          heat(annotation.id, true);
+        });
+        box.addEventListener("mouseleave", function () {
+          heat(annotation.id, false);
+        });
+        state.shadow.appendChild(box);
+        state.notes[annotation.id] = box;
+      }
+      box.className = "note" + (annotation.note ? "" : " empty");
+      box.textContent = annotation.note || "No note";
+    });
+    Object.keys(state.notes).forEach(function (id) {
+      if (wanted[id]) return;
+      state.notes[id].remove();
+      delete state.notes[id];
+    });
+    layoutNotes();
+  }
+
+  function firstMark(id) {
+    return document.querySelector('mark[data-annotator-id="' + id + '"]');
+  }
+
+  function heat(id, on) {
+    var box = state.notes[id];
+    if (box) box.classList.toggle("hot", on);
+    var marks = document.querySelectorAll('mark[data-annotator-id="' + id + '"]');
+    Array.prototype.forEach.call(marks, function (mark) {
+      mark.style.background = on ? "rgba(224,180,0,.5)" : "rgba(224,180,0,.28)";
+    });
+  }
+
+  function scheduleLayout() {
+    if (laying) return;
+    laying = true;
+    requestAnimationFrame(function () {
+      laying = false;
+      layoutNotes();
+    });
+  }
+
+  function layoutNotes() {
+    var placed = [];
+    var column = 0;
+    Object.keys(state.notes).forEach(function (id) {
+      var box = state.notes[id];
+      var mark = firstMark(id);
+      if (!mark) {
+        box.style.display = "none";
+        return;
+      }
+      var rect = mark.getBoundingClientRect();
+      var block = mark.closest(BLOCKS) || mark.parentElement;
+      column = Math.max(column, block.getBoundingClientRect().right);
+      placed.push({ box: box, rect: rect });
+    });
+
+    // Beside the text where there is room, otherwise against the window edge.
+    var left = column + NOTE_GAP;
+    var edge = window.innerWidth - NOTE_WIDTH - 12;
+    if (left > edge) left = edge;
+
+    placed.sort(function (a, b) {
+      return a.rect.top - b.rect.top;
+    });
+    var floor = -Infinity;
+    placed.forEach(function (item) {
+      var box = item.box;
+      var hidden = item.rect.bottom < 0 || item.rect.top > window.innerHeight;
+      box.style.display = hidden ? "none" : "block";
+      if (hidden) return;
+      var top = Math.max(item.rect.top, floor);
+      box.style.left = Math.round(left) + "px";
+      box.style.top = Math.round(top) + "px";
+      floor = top + box.offsetHeight + 8;
+    });
+  }
+
+  function onMarkHover(event) {
+    var mark = event.target.closest ? event.target.closest("mark[data-annotator-id]") : null;
+    if (mark) heat(mark.getAttribute("data-annotator-id"), event.type === "mouseover");
   }
 
   // ----------------------------------------------------------------- bubble
@@ -267,6 +383,7 @@
     state.annotations.push(annotation);
     window.getSelection().removeAllRanges();
     renderPill();
+    renderNotes();
 
     chrome.runtime.sendMessage(
       {
@@ -296,22 +413,28 @@
     if (!state.on) return;
     var mark = event.target.closest ? event.target.closest("mark[data-annotator-id]") : null;
     if (!mark) return;
-    var id = mark.getAttribute("data-annotator-id");
+    if (!editAnnotation(mark.getAttribute("data-annotator-id"), mark.getBoundingClientRect())) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function editAnnotation(id, rect) {
     var record = state.annotations.filter(function (a) {
       return a.id === id;
     })[0];
-    if (!record) return;
+    if (!record) return false;
 
-    event.preventDefault();
-    event.stopPropagation();
     openBubble({
       editing: true,
       quote: record.quote,
       note: record.note,
-      rect: mark.getBoundingClientRect(),
+      rect: rect,
       subtitle: record.snapshot_id ? "on disk" : "this session",
       onSave: function (note) {
         record.note = note;
+        renderNotes();
         patch(id, { note: note }, "updated");
       },
       onDelete: function () {
@@ -320,9 +443,11 @@
           return a.id !== id;
         });
         renderPill();
+        renderNotes();
         patch(id, { status: "deleted" }, "deleted");
       },
     });
+    return true;
   }
 
   function patch(id, body, verb) {
@@ -380,6 +505,7 @@
       A.highlight(index, item.found.start, item.found.end, item.annotation.id);
     });
     renderPill();
+    renderNotes();
   }
 
   // ------------------------------------------------------------------ modes
@@ -391,6 +517,10 @@
     document.addEventListener("mouseup", onSelection, true);
     document.addEventListener("click", onClick, true);
     document.addEventListener("keydown", onKeydown, true);
+    document.addEventListener("mouseover", onMarkHover, true);
+    document.addEventListener("mouseout", onMarkHover, true);
+    document.addEventListener("scroll", scheduleLayout, { capture: true, passive: true });
+    window.addEventListener("resize", scheduleLayout);
     return redraw();
   }
 
@@ -400,6 +530,10 @@
     document.removeEventListener("mouseup", onSelection, true);
     document.removeEventListener("click", onClick, true);
     document.removeEventListener("keydown", onKeydown, true);
+    document.removeEventListener("mouseover", onMarkHover, true);
+    document.removeEventListener("mouseout", onMarkHover, true);
+    document.removeEventListener("scroll", scheduleLayout, { capture: true });
+    window.removeEventListener("resize", scheduleLayout);
     state.annotations.forEach(function (annotation) {
       A.unhighlight(annotation.id);
     });
