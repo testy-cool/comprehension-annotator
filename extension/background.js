@@ -224,6 +224,63 @@ async function send(tabId, message) {
   }
 }
 
+// ------------------------------------------------------------ site access
+// A reload takes the mode with it, and activeTab cannot bring it back without
+// a fresh gesture. So the first press on a site asks Chrome for that site, and
+// from then on a page there that already has annotations is armed on load.
+// Pages with nothing on them are never injected. See ADR 0002.
+
+// Held in memory because the request must start inside the gesture, before
+// any await. A service worker restart forgets it, which costs one extra prompt.
+const declined = new Set();
+
+function sitePattern(url) {
+  try {
+    const { protocol, host } = new URL(url);
+    return /^https?:$/.test(protocol) ? `${protocol}//${host}/*` : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function askForSite(tab) {
+  const origin = tab && sitePattern(tab.url);
+  if (!origin || declined.has(origin) || !chrome.permissions) return;
+  chrome.permissions.request({ origins: [origin] }).then(
+    (granted) => {
+      if (!granted) declined.add(origin);
+    },
+    () => declined.add(origin)
+  );
+}
+
+async function rearm(tab) {
+  const origin = tab && sitePattern(tab.url);
+  if (!origin || !chrome.permissions) return;
+  if (await isOn(tab.id)) return;
+  if (!(await chrome.permissions.contains({ origins: [origin] }))) return;
+
+  let found;
+  try {
+    found = await callSink(`/documents?url=${encodeURIComponent(tab.url)}`);
+  } catch (error) {
+    return; // the sink is down; the next press will say so
+  }
+  if (!(found.annotations || []).length) return;
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["anchor.js", "content.js"],
+    });
+  } catch (error) {
+    return; // the page went away while the sink was answering
+  }
+  await setMode(tab.id, true);
+  await send(tab.id, { type: "annotator:on" });
+  await refreshBadge(tab.id);
+}
+
 // ------------------------------------------------------------------ badge
 
 async function refreshBadge(tabId) {
@@ -248,11 +305,15 @@ async function currentTabId() {
 
 // --------------------------------------------------------------- plumbing
 
-chrome.action.onClicked.addListener(toggle);
+chrome.action.onClicked.addListener((tab) => {
+  askForSite(tab);
+  return toggle(tab);
+});
 
-chrome.commands.onCommand.addListener(async (command) => {
+chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command !== "toggle-annotation-mode") return;
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab) askForSite(tab);
+  else [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   await toggle(tab);
 });
 
@@ -261,11 +322,12 @@ chrome.commands.onCommand.addListener(async (command) => {
 // would make the next press turn an already-dead mode "off" and do nothing
 // visible. Re-arming by itself is not an option, because injection needs the
 // gesture that activeTab is granted by.
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status === "loading") {
     await setMode(tabId, false);
     await refreshBadge(tabId);
   }
+  if (changeInfo.status === "complete") await rearm(tab);
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => setMode(tabId, false));

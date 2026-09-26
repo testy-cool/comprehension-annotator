@@ -51,7 +51,23 @@ function fakeChrome() {
         return { id: id, url: "https://ex.com/a" };
       },
     },
-    scripting: { async executeScript() {} },
+    scripting: {
+      injected: [],
+      async executeScript(spec) {
+        this.injected.push(spec.target.tabId);
+      },
+    },
+    permissions: {
+      granted: new Set(),
+      requested: [],
+      async contains({ origins }) {
+        return origins.every((o) => this.granted.has(o));
+      },
+      async request({ origins }) {
+        this.requested.push(...origins);
+        return false;
+      },
+    },
     alarms: { create() {}, onAlarm: on("alarm") },
     runtime: { onMessage: on("message") },
   };
@@ -84,6 +100,9 @@ function fakeSink() {
       sink.patches.push([id, body]);
       Object.assign(sink.annotations.get(id), body);
       return json({ status: "patched" });
+    }
+    if (target.pathname === "/documents" && target.searchParams.get("url")) {
+      return json({ annotations: sink.onPage || [] });
     }
     return json({ documents: [] });
   };
@@ -358,4 +377,46 @@ test("an extension page can arm and disarm a tab", async () => {
 
   const disarmed = await context.handle({ type: "annotator:toggle", tabId: 5 });
   assert.deepEqual(disarmed, { ok: true, on: false });
+});
+
+test("a reloaded page with annotations on an allowed site is armed again", async () => {
+  const { chrome, sink, context } = load();
+  await ready(context, sink);
+  chrome.permissions.granted.add("https://ex.com/*");
+  sink.onPage = [{ id: "ann-1", quote: "worth keeping" }];
+
+  await chrome._listeners.updated(7, { status: "loading" }, { id: 7, url: "https://ex.com/a" });
+  await chrome._listeners.updated(7, { status: "complete" }, { id: 7, url: "https://ex.com/a" });
+  assert.deepEqual(chrome.scripting.injected, [7]);
+  assert.equal(await context.isOn(7), true);
+});
+
+test("a page with no annotations is never injected, even on an allowed site", async () => {
+  const { chrome, sink, context } = load();
+  await ready(context, sink);
+  chrome.permissions.granted.add("https://ex.com/*");
+  sink.onPage = [];
+
+  await chrome._listeners.updated(7, { status: "complete" }, { id: 7, url: "https://ex.com/a" });
+  assert.deepEqual(chrome.scripting.injected, []);
+  assert.equal(await context.isOn(7), false);
+});
+
+test("a site the reader has not allowed is left alone and not even asked about", async () => {
+  const { chrome, sink, context } = load();
+  await ready(context, sink);
+  sink.onPage = [{ id: "ann-1", quote: "worth keeping" }];
+
+  await chrome._listeners.updated(7, { status: "complete" }, { id: 7, url: "https://ex.com/a" });
+  assert.deepEqual(chrome.scripting.injected, []);
+  assert.ok(!sink.calls.some((c) => c.startsWith("/documents")));
+});
+
+test("pressing the button asks for the site once, and not again after a no", async () => {
+  const { chrome } = load();
+  const tab = { id: 7, url: "https://ex.com/a" };
+  await chrome._listeners.action(tab);
+  await new Promise((r) => setTimeout(r, 0));
+  await chrome._listeners.action(tab);
+  assert.deepEqual(chrome.permissions.requested, ["https://ex.com/*"]);
 });
