@@ -183,7 +183,7 @@ var AnnotatorAnchor = (function () {
       var mark = document.createElement("mark");
       mark.setAttribute("data-annotator-id", annotationId);
       mark.style.cssText =
-        "background:#fff3a3;color:inherit;border-bottom:2px solid #e0b400;" +
+        "background:rgba(224,180,0,.28);color:inherit;border-bottom:2px solid #e0b400;" +
         "border-radius:2px;cursor:pointer;padding:0;";
       node.parentNode.insertBefore(mark, node);
       mark.appendChild(node);
