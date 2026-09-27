@@ -94,12 +94,12 @@
       state.shadow.appendChild(state.pill);
     }
     var parts = ["Annotating"];
-    parts.push(state.annotations.length + " here");
-    if (state.orphans) parts.push(state.orphans + " orphaned");
+    parts.push(state.annotations.length - state.orphans + " here");
+    if (state.orphans) parts.push(state.orphans + " not on this view");
     if (state.pending) parts.push(state.pending + " queued");
     if (state.message) parts.push(state.message);
     state.pill.textContent = parts.join(" · ");
-    state.pill.className = "pill" + (state.message || state.orphans ? " warn" : "");
+    state.pill.className = "pill" + (state.message ? " warn" : "");
   }
 
   function say(message) {
@@ -490,6 +490,7 @@
     state.orphans = 0;
 
     annotations.forEach(function (annotation) {
+      if (firstMark(annotation.id)) return;
       var found = A.resolve(index, annotation);
       if (!found) {
         state.orphans++;
@@ -508,6 +509,43 @@
     renderNotes();
   }
 
+  // A single-page app swaps the text under one url, as the Jev job list does
+  // when another job is opened. Passages that were not on the page before may
+  // be now, so a change to the page tries the missing ones again.
+  var watcher = null;
+  var settle = null;
+
+  function watch() {
+    watcher = new MutationObserver(function (mutations) {
+      var outside = mutations.some(function (m) {
+        return !(state.host && state.host.contains(m.target)) && !isOurMark(m);
+      });
+      if (!outside) return;
+      scheduleLayout();
+      clearTimeout(settle);
+      settle = setTimeout(function () {
+        if (state.on) apply(state.annotations);
+      }, 400);
+    });
+    watcher.observe(document.body || document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+
+  function isOurMark(mutation) {
+    var target = mutation.target;
+    if (target.nodeName === "MARK" && target.hasAttribute("data-annotator-id")) return true;
+    var nodes = Array.prototype.slice.call(mutation.addedNodes);
+    return (
+      nodes.length > 0 &&
+      nodes.every(function (n) {
+        return n.nodeName === "MARK" && n.hasAttribute("data-annotator-id");
+      })
+    );
+  }
+
   // ------------------------------------------------------------------ modes
 
   function enable() {
@@ -521,11 +559,14 @@
     document.addEventListener("mouseout", onMarkHover, true);
     document.addEventListener("scroll", scheduleLayout, { capture: true, passive: true });
     window.addEventListener("resize", scheduleLayout);
+    watch();
     return redraw();
   }
 
   function disable() {
     state.on = false;
+    if (watcher) watcher.disconnect();
+    clearTimeout(settle);
     closeBubble();
     document.removeEventListener("mouseup", onSelection, true);
     document.removeEventListener("click", onClick, true);

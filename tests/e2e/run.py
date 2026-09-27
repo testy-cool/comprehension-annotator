@@ -458,6 +458,24 @@ def main() -> int:
               len(ordered) < 2 or ordered[0]["bottom"] <= ordered[1]["top"], detail=str(notes))
         check("the notes are readable size", all(n["size"] >= 12 for n in notes))
 
+        # A single-page app swaps the text under the same url, then swaps it back.
+        original = page.evaluate("document.querySelector('article').innerHTML")
+        page.evaluate("document.querySelector('article').innerHTML = '<p>Another job entirely.</p>'")
+        time.sleep(1)
+        pill = page.evaluate("document.querySelector('[data-annotator-ui]').shadowRoot"
+                             ".querySelector('.pill').textContent")
+        check("a swapped-out view says its notes are elsewhere, not lost",
+              "2 not on this view" in pill and "orphaned" not in pill, detail=pill)
+        page.evaluate("document.querySelector('article').innerHTML = "
+                      + json.dumps(re.sub(r"</?mark[^>]*>", "", original)))
+        try:
+            page.wait_until("document.querySelectorAll('mark[data-annotator-id]').length === 2",
+                            "the notes to come back with their text", timeout=5)
+        except RuntimeError:
+            pass
+        check("swapping the text back paints its notes again",
+              page.evaluate("document.querySelectorAll('mark[data-annotator-id]').length") == 2)
+
         # The review surface, in the same browser, against the same library.
         review = Session(browser.open(f"http://127.0.0.1:{SINK_PORT}/")["webSocketDebuggerUrl"])
         review.call("Runtime.enable")
