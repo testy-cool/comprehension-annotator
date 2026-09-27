@@ -46,6 +46,33 @@ def _collapsed_with_map(text: str) -> tuple[str, list[int]]:
     return "".join(out), origin
 
 
+# What the extension quotes is the page's text nodes run together, so a
+# passage that crosses two list items arrives as "MVPsComfort", while the
+# stored markdown holds "MVPs\n- Comfort". The last resort compares the two
+# with whitespace and markdown syntax taken out of both.
+_MARKUP = re.compile(
+    r"(?m)^[ \t]*(?:[-*+]|\d+[.)]|#{1,6}|>)[ \t]+"  # list, heading and quote markers
+    r"|\*\*|__|`"  # emphasis and code
+    r"|\]\([^)\s]*\)|\["  # link syntax around the link's words
+)
+
+
+def _skeleton_with_map(text: str) -> tuple[str, list[int]]:
+    """The text with whitespace and markdown syntax removed, and where each character came from."""
+    dropped = [False] * len(text)
+    for found in _MARKUP.finditer(text):
+        for position in range(found.start(), found.end()):
+            dropped[position] = True
+    out: list[str] = []
+    origin: list[int] = []
+    for position, character in enumerate(text):
+        if dropped[position] or _WHITESPACE.match(character):
+            continue
+        out.append(character)
+        origin.append(position)
+    return "".join(out), origin
+
+
 def _occurrences(haystack: str, needle: str, limit: int = 200) -> list[int]:
     if not needle:
         return []
@@ -85,6 +112,10 @@ def resolve(text: str, annotation: dict) -> Match | None:
         flat, origin = _collapsed_with_map(text)
         wanted = collapse(quote)
         flat_starts = _occurrences(flat, wanted)
+        if not flat_starts:
+            flat, origin = _skeleton_with_map(text)
+            wanted = _WHITESPACE.sub("", quote)
+            flat_starts = _occurrences(flat, wanted)
         if not flat_starts:
             return None
         exact = False

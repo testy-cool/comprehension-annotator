@@ -65,3 +65,17 @@ def test_resolving_a_set_separates_the_orphans_and_orders_the_rest():
 
 def test_an_annotation_with_no_quote_is_an_orphan():
     assert resolve(TEXT, annotation("")) is None
+
+
+def test_a_passage_across_two_list_items_is_found_in_the_markdown():
+    # The page's text nodes run together; the stored markdown keeps the bullets.
+    text = "## What you do\n\n- Build prototypes fast\n- Experiment **quickly** across tools\n"
+    found = resolve(text, annotation("prototypes fastExperiment quickly"))
+    assert found is not None
+    assert text[found.start : found.end] == "prototypes fast\n- Experiment **quickly"
+    assert not found.exact
+
+
+def test_markdown_syntax_does_not_let_a_different_passage_match():
+    text = "- Build prototypes fast\n- Ship them\n"
+    assert resolve(text, annotation("prototypes fastExperiment")) is None
