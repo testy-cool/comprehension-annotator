@@ -42,10 +42,15 @@
       .doc.on { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
       .doc .t { font-weight: 600; }
       .doc .m { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-      .page {
-        white-space: pre-wrap; overflow-wrap: anywhere; font: inherit;
-        max-width: 74ch; margin: 0;
-      }
+      .page { overflow-wrap: anywhere; max-width: 74ch; margin: 0; }
+      .page .p { margin: 0 0 12px; white-space: pre-wrap; }
+      .page .h { font-weight: 700; margin: 22px 0 10px; }
+      .page .h1 { font-size: 22px; }
+      .page .h2 { font-size: 19px; }
+      .page .h3, .page .h4, .page .h5, .page .h6 { font-size: 17px; }
+      .page .li { margin: 0 0 6px; padding-left: 22px; position: relative; white-space: pre-wrap; }
+      .page .li::before { content: "•"; position: absolute; left: 6px; color: var(--muted); }
+      .page .md { display: none; }
       mark {
         background: var(--mark); color: inherit; border-bottom: 2px solid var(--markline);
         border-radius: 2px; cursor: pointer; scroll-margin: 40vh;
@@ -69,6 +74,7 @@
       }
       button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
       button.danger { color: #d05252; }
+      button.away { margin-bottom: 6px; color: var(--accent); }
       .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
         margin-bottom: 4px; }
       .head h2 { font-size: 22px; margin: 0; }
@@ -76,9 +82,9 @@
       .meta a { color: var(--accent); }
       .banner { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid
         var(--warn); padding: 10px 12px; border-radius: 7px; margin-bottom: 18px; font-size: 14px; }
-      .tag { font-size: 11px; color: var(--warn); text-transform: uppercase; letter-spacing: .05em; }
+      .tag { font-size: 12px; color: var(--warn); text-transform: uppercase; letter-spacing: .05em; }
       .cattag {
-        display: inline-block; margin-top: 6px; font-size: 11px; letter-spacing: .04em;
+        display: inline-block; margin-top: 6px; font-size: 12px; letter-spacing: .04em;
         text-transform: uppercase; color: var(--muted); border: 1px solid var(--line);
         border-radius: 20px; padding: 1px 8px;
       }
@@ -133,6 +139,64 @@
       };
 
       const when = (iso) => (iso ? new Date(iso).toLocaleDateString() : "");
+      const clock = (iso) =>
+        iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+
+      // ------------------------------------------------------ markdown as text
+      // The stored text is markdown, and every note points at character
+      // offsets inside it. So the markdown is laid out line by line and its
+      // syntax is hidden rather than removed: nothing an offset counts is lost.
+
+      const BLOCK = /^([ \t]*)(#{1,6}[ \t]+|[-*+][ \t]+|\d+[.)][ \t]+)?/;
+      const INLINE = /\*\*|__|`|\]\([^)\s]*\)|\[/g;
+
+      function renderMarkdown(text, placed) {
+        let html = "";
+        let at = 0;
+        for (const line of text.split("\n")) {
+          const start = at;
+          const end = at + line.length;
+          at = end + 1;
+          if (!line.trim()) continue;
+
+          const lead = line.match(BLOCK);
+          const marker = (lead[2] || "").trim();
+          const kind = marker.startsWith("#")
+            ? `h h${marker.length}`
+            : marker ? "li" : "p";
+          const hidden = [[start, start + lead[0].length]];
+          for (const found of line.slice(lead[0].length).matchAll(INLINE)) {
+            const from = start + lead[0].length + found.index;
+            hidden.push([from, from + found[0].length]);
+          }
+          html += `<div class="${kind}">${inline(text, start, end, hidden, placed)}</div>`;
+        }
+        return html;
+      }
+
+      function inline(text, start, end, hidden, placed) {
+        const cuts = new Set([start, end]);
+        hidden.forEach(([a, b]) => (cuts.add(a), cuts.add(b)));
+        placed.forEach((p) => {
+          if (p.start > start && p.start < end) cuts.add(p.start);
+          if (p.end > start && p.end < end) cuts.add(p.end);
+        });
+        const points = [...cuts].sort((a, b) => a - b);
+        let out = "";
+        for (let i = 0; i < points.length - 1; i++) {
+          const [a, b] = [points[i], points[i + 1]];
+          let piece = escape(text.slice(a, b));
+          if (hidden.some(([x, y]) => a >= x && b <= y)) piece = `<span class="md">${piece}</span>`;
+          const hit = placed.find((p) => a >= p.start && b <= p.end);
+          if (hit) {
+            piece = `<mark data-id="${hit.annotation.id}" title="${escape(
+              hit.annotation.note || ""
+            )}">${piece}</mark>`;
+          }
+          out += piece;
+        }
+        return out;
+      }
 
       // ------------------------------------------------------------ the list
 
@@ -194,9 +258,14 @@
       }
 
       function renderDocument() {
-        const { document: doc, snapshot, text, placed, orphans } = state.reading;
+        const { document: doc, snapshot, text, placed, orphans, elsewhere } = state.reading;
         const main = document.getElementById("main");
 
+        const made = {};
+        placed
+          .map((p) => p.annotation)
+          .concat(orphans, elsewhere)
+          .forEach((a) => (made[a.snapshot_id] = (made[a.snapshot_id] || 0) + 1));
         const options = doc.snapshots
           .slice()
           .reverse()
@@ -204,20 +273,13 @@
             (s) =>
               `<option value="${s.id}" ${s.id === snapshot.id ? "selected" : ""}>${when(
                 s.captured_at
-              )} · ${s.word_count} words</option>`
+              )} ${clock(s.captured_at)} · ${s.word_count} words${
+                made[s.id] ? ` · ${made[s.id]} note${made[s.id] === 1 ? "" : "s"}` : ""
+              }</option>`
           )
           .join("");
 
-        let body = "";
-        let cursor = 0;
-        placed.forEach((item, index) => {
-          body += escape(text.slice(cursor, item.start));
-          body += `<mark data-id="${item.annotation.id}" title="${escape(
-            item.annotation.note || ""
-          )}">${escape(text.slice(item.start, item.end))}</mark>`;
-          cursor = item.end;
-        });
-        body += escape(text.slice(cursor));
+        const body = renderMarkdown(text, placed);
 
         main.innerHTML = `
           <div class="head">
@@ -229,8 +291,9 @@
           </div>
           <div class="meta">
             <a href="${escape(doc.url)}" target="_blank" rel="noreferrer">${escape(doc.url)}</a>
-            · captured ${when(snapshot.captured_at)}
+            · captured ${when(snapshot.captured_at)} ${clock(snapshot.captured_at)}
             · ${placed.length} note${placed.length === 1 ? "" : "s"} here
+            ${elsewhere.length ? `· ${elsewhere.length} on other snapshots` : ""}
             ${orphans.length ? `· <span class="tag">${orphans.length} orphaned</span>` : ""}
           </div>
           ${
@@ -241,7 +304,7 @@
                    and the rewrite prompt passes them along as evidence.</div>`
               : ""
           }
-          <pre class="page" id="page">${body}</pre>`;
+          <div class="page" id="page">${body}</div>`;
 
         const picker = document.getElementById("snap");
         if (picker) picker.addEventListener("change", () => open(state.current, picker.value));
@@ -254,16 +317,27 @@
       // ------------------------------------------------------------- the rail
 
       function renderRail() {
-        const { placed, orphans } = state.reading;
+        const { placed, orphans, elsewhere, document: doc } = state.reading;
         const rail = document.getElementById("rail");
+        const taken = (a) => {
+          const s = doc.snapshots.find((x) => x.id === a.snapshot_id);
+          return s ? `${when(s.captured_at)} ${clock(s.captured_at)}` : "another";
+        };
 
-        const card = (annotation, orphan) => {
+        const card = (annotation, orphan, away) => {
           const category = annotation.category
             ? `<div class="cattag">${escape(annotation.category)}</div>`
             : "";
           return `<div class="note ${annotation.id === state.focused ? "on" : ""}"
                        data-id="${annotation.id}">
             ${orphan ? '<div class="tag">not in this snapshot</div>' : ""}
+            ${
+              away
+                ? `<button class="away" data-go="${annotation.snapshot_id}">On the ${taken(
+                    annotation
+                  )} snapshot</button>`
+                : ""
+            }
             <div class="q">${escape(annotation.quote)}</div>
             <div class="n" data-edit="${annotation.id}">${escape(annotation.note || "")}</div>
             ${category}
@@ -277,11 +351,15 @@
 
         rail.innerHTML =
           `<div class="pad"><h1>Notes</h1></div>` +
-          (placed.length || orphans.length
+          (placed.length || orphans.length || elsewhere.length
             ? placed.map((p) => card(p.annotation, false)).join("") +
+              elsewhere.map((e) => card(e, false, true)).join("") +
               orphans.map((o) => card(o, true)).join("")
             : '<p class="empty">No notes on this page.</p>');
 
+        rail.querySelectorAll("[data-go]").forEach((node) =>
+          node.addEventListener("click", () => open(state.current, node.dataset.go))
+        );
         rail.querySelectorAll("[data-edit]").forEach((node) =>
           node.addEventListener("click", () => edit(node))
         );
