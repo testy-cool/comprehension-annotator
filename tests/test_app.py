@@ -191,7 +191,13 @@ def test_a_reading_can_ask_for_an_older_snapshot(client):
     assert "a great deal more" not in original["text"]
     assert len(latest["placed"]) == 2
     assert len(original["placed"]) == 1
-    assert len(original["orphans"]) == 1
+    # Made on the later snapshot and found there, so it is not an orphan.
+    assert original["orphans"] == []
+    assert [a["id"] for a in original["elsewhere"]] == ["ann-2"]
+    prompt = client.get(
+        f"/documents/{doc_id}/prompt", params={"snapshot": first["snapshot_id"]}
+    ).text
+    assert "a great deal more" not in prompt
 
 
 def test_asking_for_a_snapshot_that_does_not_exist_is_a_404(client):

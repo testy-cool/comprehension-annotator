@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
-from .anchor import resolve_all
+from .anchor import resolve, resolve_all
 from .auth import EXTENSION_ORIGIN, matches
 from .library import Library
 from .rewrite import build_prompt
@@ -141,12 +141,29 @@ def create_app(library: Library, token: str) -> FastAPI:
             raise HTTPException(status_code=409, detail="this document has no snapshot")
         return found, chosen
 
+    def _elsewhere(doc_id: str, chosen: dict, orphans: list[dict]) -> tuple[list, list]:
+        """Split the misses into notes made on another snapshot and real orphans.
+
+        A single-page app can show many different texts under one url, so a
+        note from another snapshot is usually about other words entirely. It
+        only counts as an Orphan if it is lost from its own snapshot as well.
+        """
+        elsewhere, lost = [], []
+        for annotation in orphans:
+            own = annotation.get("snapshot_id")
+            if own and own != chosen["id"] and resolve(library.snapshot_text(doc_id, own), annotation):
+                elsewhere.append(annotation)
+            else:
+                lost.append(annotation)
+        return elsewhere, lost
+
     @app.get("/documents/{doc_id}/reading", dependencies=[Depends(authorize)])
     def reading(doc_id: str, snapshot: str | None = Query(default=None)) -> dict:
         """One Snapshot's text with every Annotation located inside it."""
         found, chosen = _snapshot_of(doc_id, snapshot)
         text = library.snapshot_text(doc_id, chosen["id"])
         placed, orphans = resolve_all(text, library.annotations(doc_id))
+        elsewhere, orphans = _elsewhere(doc_id, chosen, orphans)
         return {
             "document": found,
             "snapshot": chosen,
@@ -162,6 +179,7 @@ def create_app(library: Library, token: str) -> FastAPI:
                 for annotation, match in placed
             ],
             "orphans": orphans,
+            "elsewhere": elsewhere,
         }
 
     @app.get("/documents/{doc_id}/prompt", response_class=PlainTextResponse,
@@ -170,7 +188,11 @@ def create_app(library: Library, token: str) -> FastAPI:
         found, chosen = _snapshot_of(doc_id, snapshot)
         text = library.snapshot_text(doc_id, chosen["id"])
         document = dict(found, snapshots=[chosen])
-        return build_prompt(document, library.annotations(doc_id), text)
+        annotations = library.annotations(doc_id)
+        _, orphans = resolve_all(text, annotations)
+        elsewhere, _ = _elsewhere(doc_id, chosen, orphans)
+        skip = {a["id"] for a in elsewhere}
+        return build_prompt(document, [a for a in annotations if a["id"] not in skip], text)
 
     @app.get("/search", dependencies=[Depends(authorize)])
     def search(q: str = Query(default="")) -> dict:
