@@ -50,6 +50,16 @@ function fakeChrome() {
       async get(id) {
         return { id: id, url: "https://ex.com/a" };
       },
+      created: [],
+      async create(spec) {
+        this.created.push(spec.url);
+      },
+    },
+    extension: {
+      fileAccess: true,
+      async isAllowedFileSchemeAccess() {
+        return this.fileAccess;
+      },
     },
     scripting: {
       injected: [],
@@ -69,7 +79,7 @@ function fakeChrome() {
       },
     },
     alarms: { create() {}, onAlarm: on("alarm") },
-    runtime: { onMessage: on("message") },
+    runtime: { id: "abcdefgh", onMessage: on("message") },
   };
 }
 
@@ -419,4 +429,48 @@ test("pressing the button asks for the site once, and not again after a no", asy
   await new Promise((r) => setTimeout(r, 0));
   await chrome._listeners.action(tab);
   assert.deepEqual(chrome.permissions.requested, ["https://ex.com/*"]);
+});
+
+const LOCAL = { id: 7, url: "file:///home/me/notes/a.html" };
+
+test("pressing on a local file with file access off sends the reader to the switch", async () => {
+  const { chrome } = load();
+  chrome.extension.fileAccess = false;
+
+  await chrome._listeners.action(LOCAL);
+  assert.deepEqual(chrome.tabs.created, ["chrome://extensions/?id=abcdefgh"]);
+  assert.deepEqual(chrome.scripting.injected, [], "nothing was injected into the file");
+});
+
+test("pressing on a local file asks for local files, then arms it", async () => {
+  const { chrome, context } = load();
+
+  await chrome._listeners.action(LOCAL);
+  assert.deepEqual(chrome.permissions.requested, ["file:///*"]);
+  assert.deepEqual(chrome.scripting.injected, [7]);
+  assert.equal(await context.isOn(7), true);
+  assert.deepEqual(chrome.tabs.created, []);
+});
+
+test("a reloaded local page with annotations is armed again", async () => {
+  const { chrome, sink, context } = load();
+  await ready(context, sink);
+  chrome.permissions.granted.add("file:///*");
+  sink.onPage = [{ id: "ann-1", quote: "worth keeping" }];
+
+  await chrome._listeners.updated(7, { status: "complete" }, LOCAL);
+  assert.deepEqual(chrome.scripting.injected, [7]);
+  assert.match(sink.calls[0], /^\/documents\?url=file%3A%2F%2F%2Fhome%2Fme%2Fnotes%2Fa\.html$/);
+});
+
+test("a local page is left alone on reload while file access is off", async () => {
+  const { chrome, sink, context } = load();
+  await ready(context, sink);
+  chrome.extension.fileAccess = false;
+  chrome.permissions.granted.add("file:///*");
+  sink.onPage = [{ id: "ann-1", quote: "worth keeping" }];
+
+  await chrome._listeners.updated(7, { status: "complete" }, LOCAL);
+  assert.deepEqual(chrome.scripting.injected, []);
+  assert.ok(!sink.calls.some((c) => c.startsWith("/documents")));
 });

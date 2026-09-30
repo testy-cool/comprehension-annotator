@@ -88,6 +88,12 @@ the unit before installing it.
   starts on by itself are pages that already have your notes, on sites you
   allowed.
 
+- **Files on your disk work too.** Turn on **Allow access to file URLs** for
+  the extension on `chrome://extensions`, then press `Alt+A` on a `file://`
+  page. Chrome keeps that switch out of the extension's reach, so if it is off
+  the first press opens the extension's page for you to flip it. Chrome
+  reloads the extension when you do, so press `Alt+A` again afterwards.
+
 - **The server can be down.** Notes wait in the extension and are sent once
   the server is back. The icon shows how many are waiting.
 

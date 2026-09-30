@@ -36,3 +36,11 @@ def test_the_same_page_reached_two_ways_is_one_document():
 
 def test_different_pages_are_different_documents():
     assert document_id("https://ex.com/a") != document_id("https://ex.com/b")
+
+
+def test_a_local_file_keeps_its_path_and_loses_only_its_fragment():
+    assert normalize_url("file:///home/me/notes/a%20b.html#top") == "file:///home/me/notes/a%20b.html"
+
+
+def test_two_local_files_are_two_documents():
+    assert document_id("file:///home/me/a.html") != document_id("file:///home/me/b.html")

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -247,10 +248,10 @@ def main() -> int:
             % (SINK_PORT, token)
         )
 
-        def tab_id():
+        def tab_id(pattern: str = f"http://127.0.0.1:{PAGE_PORT}/*"):
             return options.evaluate(
                 "(async()=>{const [t]=await chrome.tabs.query"
-                "({url:'http://127.0.0.1:%d/*'});return t?t.id:null})()" % PAGE_PORT
+                "({url:'%s'});return t?t.id:null})()" % pattern
             )
 
         def mode_is_on(target: int) -> bool:
@@ -261,14 +262,14 @@ def main() -> int:
                 )
             )
 
-        def set_mode(want: bool) -> bool:
+        def set_mode(want: bool, pattern: str = f"http://127.0.0.1:{PAGE_PORT}/*") -> bool:
             """Alt+A, as far as the extension is concerned.
 
             Reads the mode before touching it rather than firing the toggle and
             hoping. A service worker Chrome has stopped can drop the first
             message it is sent, and a blind retry would just toggle back.
             """
-            target = options.wait_until(tab_id, "the page to appear in the tab list")
+            target = options.wait_until(lambda: tab_id(pattern), "the page to appear in the tab list")
             for _ in range(12):
                 if mode_is_on(target) == want:
                     return True
@@ -526,6 +527,76 @@ def main() -> int:
               page.evaluate("document.querySelectorAll('mark[data-annotator-id]').length") == 0)
         check("switching off removes the interface",
               not page.evaluate("!!document.querySelector('[data-annotator-ui]')"))
+
+        # A page opened from disk. A browser started with --load-extension gives
+        # the extension "Allow access to file URLs" from the outset, and turning
+        # it off reloads the extension for good under that flag, so the switch
+        # being off is covered by the node tests instead.
+        local_page = site / "local.html"
+        local_page.write_text(PAGE, encoding="utf-8")
+        local_url = local_page.as_uri()
+
+        local_tab = Session(browser.open(local_url)["webSocketDebuggerUrl"])
+        local_tab.call("Runtime.enable")
+        local_tab.wait_until("document.readyState === 'complete'", "the local page to load")
+        options.wait_until(lambda: tab_id("file:///*"), "the local page to appear in the tab list")
+
+        # A gesture is what lets a page ask for a permission, exactly as the
+        # first press does. The headless browser answers yes.
+        granted = options.call("Runtime.evaluate", {
+            "expression": "chrome.permissions.request({origins:['file:///*']})",
+            "awaitPromise": True, "returnByValue": True, "userGesture": True,
+        })["result"].get("value")
+        check("Chrome grants the extension local files once asked", granted is True)
+
+        check("arming a local page works", set_mode(True, "file:///*"))
+        local_tab.wait_until("!!document.querySelector('[data-annotator-ui]')",
+                             "the interface to mount on the local page")
+        local_tab.evaluate("""
+          (() => {
+            const node = document.getElementById('two').firstChild;
+            const at = node.nodeValue.indexOf('the quote alone is not enough');
+            const range = document.createRange();
+            range.setStart(node, at);
+            range.setEnd(node, at + 'the quote alone is not enough'.length);
+            const selection = getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            document.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+            return true;
+          })()
+        """)
+        local_shadow = "document.querySelector('[data-annotator-ui]').shadowRoot"
+        local_tab.wait_until(f"!!{local_shadow}.querySelector('.card')", "the bubble to open")
+        local_tab.evaluate(f"""
+          (() => {{
+            const note = {local_shadow}.querySelector('textarea');
+            note.value = 'written on a file from disk';
+            note.dispatchEvent(new KeyboardEvent('keydown', {{key: 'Enter', bubbles: true}}));
+            return true;
+          }})()
+        """)
+        local_tab.wait_until("document.querySelectorAll('mark[data-annotator-id]').length > 0",
+                             "the passage on the local page to be highlighted")
+        time.sleep(1.5)
+
+        stored = sink_call(f"/documents?url={urllib.parse.quote(local_url, safe='')}", token)
+        check("the note on a local page is on disk under its file url",
+              [a["note"] for a in stored["annotations"]] == ["written on a file from disk"],
+              detail=json.dumps(stored)[:200])
+
+        local_tab.call("Page.reload")
+        local_tab.wait_until("document.readyState === 'complete'", "the local page to reload")
+        local_tab.wait_until("!document.querySelector('[data-annotator-ui]')",
+                             "the reload to take the interface with it")
+        check("a reloaded local page can be armed again", set_mode(True, "file:///*"))
+        try:
+            local_tab.wait_until("document.querySelectorAll('mark[data-annotator-id]').length > 0",
+                                 "the local note to be painted back on", timeout=15)
+        except RuntimeError:
+            pass
+        check("returning to a local page paints its note back on",
+              local_tab.evaluate("document.querySelectorAll('mark[data-annotator-id]').length") == 1)
 
     finally:
         if browser:

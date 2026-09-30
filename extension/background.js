@@ -200,7 +200,13 @@ async function isOn(tabId) {
 
 async function toggle(tab) {
   if (!tab || !tab.id) return;
-  if (!/^https?:/.test(tab.url || "")) return;
+  if (!/^(https?|file):/.test(tab.url || "")) return;
+  if (isLocalFile(tab.url) && !(await canReadLocalFiles())) {
+    // Chrome keeps this switch out of reach of the extension, so the only
+    // thing to do is put the user in front of it instead of failing silently.
+    await chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` });
+    return;
+  }
 
   if (await isOn(tab.id)) {
     await send(tab.id, { type: "annotator:off" });
@@ -234,7 +240,22 @@ async function send(tabId, message) {
 // any await. A service worker restart forgets it, which costs one extra prompt.
 const declined = new Set();
 
+function isLocalFile(url) {
+  return /^file:/.test(url || "");
+}
+
+// "Allow access to file URLs" on the extension's page is a separate switch that
+// no permission request can flip, and it is off until the user turns it on.
+async function canReadLocalFiles() {
+  try {
+    return await chrome.extension.isAllowedFileSchemeAccess();
+  } catch (error) {
+    return false;
+  }
+}
+
 function sitePattern(url) {
+  if (isLocalFile(url)) return "file:///*";
   try {
     const { protocol, host } = new URL(url);
     return /^https?:$/.test(protocol) ? `${protocol}//${host}/*` : null;
@@ -245,8 +266,8 @@ function sitePattern(url) {
 
 function askForSite(tab) {
   const origin = tab && sitePattern(tab.url);
-  if (!origin || declined.has(origin) || !chrome.permissions) return;
-  chrome.permissions.request({ origins: [origin] }).then(
+  if (!origin || declined.has(origin) || !chrome.permissions) return Promise.resolve();
+  return chrome.permissions.request({ origins: [origin] }).then(
     (granted) => {
       if (!granted) declined.add(origin);
     },
@@ -254,10 +275,20 @@ function askForSite(tab) {
   );
 }
 
+// A press on a local file waits for the answer, because activeTab is not known
+// to reach file pages and the first press would otherwise inject before Chrome
+// had granted them.
+async function press(tab) {
+  const asked = askForSite(tab);
+  if (tab && isLocalFile(tab.url)) await asked;
+  await toggle(tab);
+}
+
 async function rearm(tab) {
   const origin = tab && sitePattern(tab.url);
   if (!origin || !chrome.permissions) return;
   if (await isOn(tab.id)) return;
+  if (isLocalFile(tab.url) && !(await canReadLocalFiles())) return;
   if (!(await chrome.permissions.contains({ origins: [origin] }))) return;
 
   let found;
@@ -305,15 +336,12 @@ async function currentTabId() {
 
 // --------------------------------------------------------------- plumbing
 
-chrome.action.onClicked.addListener((tab) => {
-  askForSite(tab);
-  return toggle(tab);
-});
+chrome.action.onClicked.addListener(press);
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command !== "toggle-annotation-mode") return;
-  if (tab) askForSite(tab);
-  else [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab) return press(tab);
+  [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   await toggle(tab);
 });
 

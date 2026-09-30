@@ -5,7 +5,7 @@
   "description": "Mark passages while you read and keep them, with the page, on your own disk.",
   "permissions": ["activeTab", "scripting", "storage", "unlimitedStorage", "alarms", "tabs"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
-  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "optional_host_permissions": ["http://*/*", "https://*/*", "file:///*"],
   "background": { "service_worker": "background.js" },
   "action": {
     "default_title": "Toggle annotation mode (Alt+A)",
