@@ -135,7 +135,10 @@
         value.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
 
       const host = (url) => {
-        try { return new URL(url).host; } catch { return url; }
+        try {
+          const parsed = new URL(url);
+          return parsed.host || decodeURI(parsed.pathname);
+        } catch { return url; }
       };
 
       const when = (iso) => (iso ? new Date(iso).toLocaleDateString() : "");
