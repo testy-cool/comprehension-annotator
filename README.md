@@ -1,121 +1,159 @@
 # Comprehension Annotator
 
-Mark passages while you read, and keep them, with the page they came from, on
-your own disk.
+Mark the sentences that made you stop while reading. Get back a prompt that
+asks a model to rewrite the page so the next reader doesn't stop there.
 
-The point of collecting them is what happens next: feeding a page and your notes
-on it to an agent that rewrites the text into something you can take in faster.
+It is a Chrome extension plus a small local server. Your notes and a copy of
+each page stay on your own disk. Nothing is sent anywhere else, and nothing
+here calls a model.
 
-Read [CONTEXT.md](CONTEXT.md) for what the words mean, [docs/design.md](docs/design.md)
-for how it fits together, and [docs/adr/](docs/adr/) for why.
+![Annotating a page: two notes in the margin, a third being written](docs/images/annotating.png)
 
-## Running it
+## How it works
 
-Start the sink. It is the only thing that writes to disk, and the extension
-queues everything locally while it is not running, so it does not have to be up
-all the time.
+1. Press `Alt+A` on a page. The tab goes into annotation mode.
+
+2. Select a passage, type why it slowed you down, and press Enter. The note
+   appears in the margin next to the passage.
+
+3. Open the library at `http://127.0.0.1:8790/` to read the page back with your
+   notes, and press **Rewrite prompt**.
+
+![The library: the captured page with its notes highlighted and listed](docs/images/review.png)
+
+The prompt holds the page, your notes marked in place, and instructions for
+the rewrite. Paste it into any model. This is the prompt from the screenshots
+above, shortened:
 
 ```
+**1.** “a character offset into the page text as a hint”
+> Hint for what? Say it breaks ties between repeats.
+
+**3.** “a search rather than a lookup”
+> This is the key idea. Lead with it.
+...
+Resolving an anchor is ⟦3⟧a search rather than a lookup⟦/3⟧, so it can return
+no match or an ambiguous match.
+```
+
+## Install
+
+You need [uv](https://docs.astral.sh/uv/) and Chrome or another Chromium
+browser.
+
+**1. Start the local server.**
+
+```
+git clone https://github.com/testy-cool/comprehension-annotator
+cd comprehension-annotator
 uv run python -m sink
 ```
 
-On first run it prints where it put the token. Read it back with:
+On first run it creates a token that the extension uses to talk to it. Leave
+it running, and print the token from a second terminal:
 
 ```
 uv run python -m sink --print-token
 ```
 
-To stop starting it by hand, install it as a user service. It then comes back
-after a reboot without anyone logging in, because lingering is on.
+**2. Load the extension.**
+
+Open `chrome://extensions`, turn on **Developer mode**, press **Load
+unpacked**, and pick the `extension/` folder. Open the extension's options,
+paste the token, and press **Test connection**.
+
+**3. Annotate.** Press `Alt+A` on any page and select some text.
+
+### Keep the server running (Linux)
+
+To have the server start by itself, install it as a systemd user service:
 
 ```
-cp packaging/comprehension-annotator.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now comprehension-annotator
+packaging/install-service.sh
 ```
 
-```
-systemctl --user status comprehension-annotator      is it up
-journalctl --user -u comprehension-annotator -f      what it is doing
-systemctl --user restart comprehension-annotator     after changing the code
-```
+The service can only write to the library and its token folder, and can only
+talk to your own machine. Use `packaging/install-service.sh --print` to see
+the unit before installing it.
 
-The unit can only write to the library and the token directory, and can only
-talk to loopback. Both are true of the sink anyway, so this only makes a bug
-in it less interesting.
+## Things worth knowing
 
-Load the extension in Chrome from `chrome://extensions` with developer mode
-turned on, then Load unpacked and pick the `extension/` directory. Open its
-options, paste the token, and press Test connection.
+- **Your notes come back.** Reopen an annotated page and its highlights and
+  margin notes are drawn again. The first time you press `Alt+A` on a site,
+  Chrome asks whether the extension may run there. If you allow it, pages on
+  that site with notes are redrawn on load. If you don't, press `Alt+A` to
+  bring them back.
 
-Then press `Alt+A` in any tab you want to annotate. Select a passage, type why
-it caught you, press Enter. Press `Alt+A` again to switch the tab back to
-normal.
+- **The extension stays off until you press `Alt+A`.** The only pages it
+  starts on by itself are pages that already have your notes, on sites you
+  allowed.
 
-## Going back over what you marked
+- **The server can be down.** Notes wait in the extension and are sent once
+  the server is back. The icon shows how many are waiting.
 
-Open <http://127.0.0.1:8790/> while the sink is running. Every page you have
-annotated is listed on the left, the captured text is in the middle with your
-notes highlighted in it, and the notes themselves are in the rail on the right.
-Click a note to edit it, give it a category, or delete it. Search covers both
-what you wrote and the passages you wrote it about.
+- **Pages change.** Notes are found again by their exact words and the text
+  around them, not by page structure. A note whose words are gone is shown as
+  missing, not dropped.
 
-A note whose passage is no longer in the captured text is shown as orphaned
-rather than quietly dropped. Pages captured more than once have a snapshot
-picker, so a note can be read against the version it was made on.
+- **One address, many pages.** Some sites show different content at the same
+  address. Each version is kept as its own snapshot, and each note links to
+  the version it was made on.
 
-The Rewrite prompt button builds the prompt below for whichever snapshot you are
-looking at, and copies it.
+## Where your data goes
 
-## Getting the rewrite prompt
+Everything is in `library/` inside the checkout, which git ignores. Set
+`ANNOTATOR_LIBRARY` to keep it somewhere else.
 
 ```
-uv run python -m sink list                        what is in the library
-uv run python -m sink prompt rate-limits          the prompt for one page
+library/documents/<id>/
+  document.json          the address, title and list of snapshots
+  annotations.json       your notes
+  snapshots/
+    <time>-<hash>.html   the page as your browser showed it
+    <time>-<hash>.md     readable text taken from that page
 ```
 
-The target can be a full url, a document id, or enough of a url to be
-unambiguous. The prompt carries the page, your notes marked in place with
-`⟦1⟧ … ⟦/1⟧`, and instructions for the rewrite. Notes whose passage is no longer
-in the captured text are passed along separately, as evidence of what you found
-hard rather than as places in this version.
+A page is only stored again when its content has changed.
 
-Nothing here calls a model. Pipe it to whichever one you want.
-
-## What lands on disk
+## From the command line
 
 ```
-library/
-  index.json
-  documents/<doc-id>/
-    document.json
-    annotations.json
-    snapshots/
-      <timestamp>-<hash>.html        the page as the browser rendered it
-      <timestamp>-<hash>.md          readable text derived from that html
-      <timestamp>-<hash>.meta.json
+uv run python -m sink list                  every page in the library
+uv run python -m sink prompt <page>         the rewrite prompt for one page
 ```
 
-One directory per URL, however many times you come back to it. The page is only
-stored again when it has actually changed. Set `ANNOTATOR_LIBRARY` to keep the
-library somewhere other than this repo.
+`<page>` can be the full address, the id from `list`, or enough of the address
+to pick one page. The prompt goes to stdout, so it can be piped to any model
+CLI.
 
 ## Tests
 
 ```
-uv run pytest                 # the sink
-pnpm test                     # anchoring and the queue, in jsdom and in node
-uv run python tests/e2e/run.py  # the real extension in a real browser
+uv run pytest                     # the server
+pnpm test                         # matching notes to text, and the queue
+uv run python tests/e2e/run.py    # the real extension in a real browser
 ```
 
-The end to end run drives an isolated browser on its own profile and port, so it
-will not touch the browser you are using. It runs under Brave rather than
-Chrome, because Chrome 151 refuses `--load-extension` from the command line and
-carries on without the extension. Loading unpacked from `chrome://extensions` by
-hand is unaffected.
+The browser test uses its own profile and port, so it doesn't touch your
+browser. It needs Brave or Chromium, because current Chrome refuses to load an
+extension from the command line. Loading it by hand, as in the install steps,
+works in Chrome.
 
 ## Not built yet
 
-Rewriting inside Chrome, and anything that calls a model. Repairing an orphaned
-annotation by pointing it at the passage that replaced it: they are found and
-shown, but re-anchoring one is still manual.
+- Rewriting inside the browser, and anything that calls a model.
+
+- Moving a missing note to the passage that replaced it. Missing notes are
+  shown, but fixing one is still manual.
+
+## Further reading
+
+- [CONTEXT.md](CONTEXT.md): what the project's terms mean.
+
+- [docs/design.md](docs/design.md): how the parts fit together.
+
+- [docs/adr/](docs/adr/): why it is built this way.
+
+## License
+
+MIT
